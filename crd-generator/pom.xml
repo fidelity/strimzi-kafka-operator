@@ -5,7 +5,7 @@
   <parent>
     <artifactId>strimzi</artifactId>
     <groupId>io.strimzi</groupId>
-    <version>0.35.0-SNAPSHOT</version>
+    <version>0.39.0-SNAPSHOT</version>
   </parent>
   <modelVersion>4.0.0</modelVersion>
   <artifactId>crd-generator</artifactId>
@@ -20,16 +20,15 @@
   <properties>
     <maven.compiler.source>11</maven.compiler.source>
     <maven.compiler.target>11</maven.compiler.target>
+
+    <!-- Points to the root directory of the Strimzi project directory and can be used for fixed location to configuration files -->
+    <strimziRootDirectory>${basedir}${file.separator}..</strimziRootDirectory>
   </properties>
 
   <dependencies>
     <dependency>
       <groupId>io.strimzi</groupId>
       <artifactId>crd-annotations</artifactId>
-    </dependency>
-    <dependency>
-      <groupId>com.fasterxml.jackson.core</groupId>
-      <artifactId>jackson-core</artifactId>
     </dependency>
     <dependency>
       <groupId>com.fasterxml.jackson.core</groupId>

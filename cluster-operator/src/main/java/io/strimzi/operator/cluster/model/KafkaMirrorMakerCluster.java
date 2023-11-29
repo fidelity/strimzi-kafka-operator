@@ -36,9 +36,9 @@ import io.strimzi.operator.cluster.model.metrics.MetricsModel;
 import io.strimzi.operator.cluster.model.metrics.SupportsMetrics;
 import io.strimzi.operator.cluster.model.securityprofiles.ContainerSecurityProviderContextImpl;
 import io.strimzi.operator.cluster.model.securityprofiles.PodSecurityProviderContextImpl;
-import io.strimzi.operator.common.MetricsAndLogging;
 import io.strimzi.operator.common.Reconciliation;
 import io.strimzi.operator.common.Util;
+import io.strimzi.operator.common.model.InvalidResourceException;
 
 import java.util.ArrayList;
 import java.util.HashMap;
@@ -64,10 +64,8 @@ public class KafkaMirrorMakerCluster extends AbstractModel implements SupportsMe
     private static final String LOG_AND_METRICS_CONFIG_VOLUME_MOUNT = "/opt/kafka/custom-config/";
 
     // Configuration defaults
-    private static final int DEFAULT_HEALTHCHECK_DELAY = 60;
-    private static final int DEFAULT_HEALTHCHECK_TIMEOUT = 5;
-    private static final int DEFAULT_HEALTHCHECK_PERIOD = 10;
-    private static final Probe READINESS_PROBE_OPTIONS = new ProbeBuilder().withTimeoutSeconds(DEFAULT_HEALTHCHECK_TIMEOUT).withInitialDelaySeconds(DEFAULT_HEALTHCHECK_DELAY).build();
+    private static final int DEFAULT_HEALTHCHECK_PERIOD = 10; // This is used inside the Mirror Maker agent
+    private static final Probe DEFAULT_HEALTHCHECK_OPTIONS = new ProbeBuilder().withTimeoutSeconds(5).withInitialDelaySeconds(60).build();
 
     // Kafka Mirror Maker configuration keys (EnvVariables)
     protected static final String ENV_VAR_PREFIX = "KAFKA_MIRRORMAKER_";
@@ -142,14 +140,10 @@ public class KafkaMirrorMakerCluster extends AbstractModel implements SupportsMe
      *
      * @param reconciliation The reconciliation
      * @param resource Kubernetes resource with metadata containing the namespace and cluster name
+     * @param sharedEnvironmentProvider Shared environment provider
      */
-    protected KafkaMirrorMakerCluster(Reconciliation reconciliation, HasMetadata resource) {
-        super(reconciliation, resource, KafkaMirrorMakerResources.deploymentName(resource.getMetadata().getName()), COMPONENT_TYPE);
-
-        this.readinessPath = "/";
-        this.readinessProbeOptions = READINESS_PROBE_OPTIONS;
-        this.livenessPath = "/";
-        this.livenessProbeOptions = READINESS_PROBE_OPTIONS;
+    protected KafkaMirrorMakerCluster(Reconciliation reconciliation, HasMetadata resource, SharedEnvironmentProvider sharedEnvironmentProvider) {
+        super(reconciliation, resource, KafkaMirrorMakerResources.deploymentName(resource.getMetadata().getName()), COMPONENT_TYPE, sharedEnvironmentProvider);
     }
 
     /**
@@ -158,25 +152,23 @@ public class KafkaMirrorMakerCluster extends AbstractModel implements SupportsMe
      * @param reconciliation        Reconciliation marker
      * @param kafkaMirrorMaker      KafkaMirrorMaker custom resource
      * @param versions              Supported Kafka versions
+     * @param sharedEnvironmentProvider Shared environment provider.
      *
      * @return  Kafka Mirror Maker model instance
      */
     @SuppressWarnings("deprecation")
-    public static KafkaMirrorMakerCluster fromCrd(Reconciliation reconciliation, KafkaMirrorMaker kafkaMirrorMaker, KafkaVersion.Lookup versions) {
-        KafkaMirrorMakerCluster result = new KafkaMirrorMakerCluster(reconciliation, kafkaMirrorMaker);
+    public static KafkaMirrorMakerCluster fromCrd(Reconciliation reconciliation,
+                                                  KafkaMirrorMaker kafkaMirrorMaker,
+                                                  KafkaVersion.Lookup versions,
+                                                  SharedEnvironmentProvider sharedEnvironmentProvider) {
+        KafkaMirrorMakerCluster result = new KafkaMirrorMakerCluster(reconciliation, kafkaMirrorMaker, sharedEnvironmentProvider);
 
         KafkaMirrorMakerSpec spec = kafkaMirrorMaker.getSpec();
         if (spec != null) {
             result.replicas = spec.getReplicas();
             result.resources = spec.getResources();
-
-            if (spec.getReadinessProbe() != null) {
-                result.readinessProbeOptions = spec.getReadinessProbe();
-            }
-
-            if (spec.getLivenessProbe() != null) {
-                result.livenessProbeOptions = spec.getLivenessProbe();
-            }
+            result.readinessProbeOptions = ProbeUtils.extractReadinessProbeOptionsOrDefault(spec, DEFAULT_HEALTHCHECK_OPTIONS);
+            result.livenessProbeOptions = ProbeUtils.extractLivenessProbeOptionsOrDefault(spec, DEFAULT_HEALTHCHECK_OPTIONS);
 
             String whitelist = spec.getWhitelist();
             String include = spec.getInclude();
@@ -320,9 +312,9 @@ public class KafkaMirrorMakerCluster extends AbstractModel implements SupportsMe
                 getEnvVars(),
                 getContainerPortList(),
                 getVolumeMounts(),
-                ProbeGenerator.defaultBuilder(livenessProbeOptions).withNewExec().withCommand("/opt/kafka/kafka_mirror_maker_liveness.sh").endExec().build(),
+                ProbeUtils.defaultBuilder(livenessProbeOptions).withNewExec().withCommand("/opt/kafka/kafka_mirror_maker_liveness.sh").endExec().build(),
                 // The mirror-maker-agent will create /tmp/mirror-maker-ready in the container
-                ProbeGenerator.defaultBuilder(readinessProbeOptions).withNewExec().withCommand("test", "-f", "/tmp/mirror-maker-ready").endExec().build(),
+                ProbeUtils.defaultBuilder(readinessProbeOptions).withNewExec().withCommand("test", "-f", "/tmp/mirror-maker-ready").endExec().build(),
                 imagePullPolicy
         );
     }
@@ -333,7 +325,7 @@ public class KafkaMirrorMakerCluster extends AbstractModel implements SupportsMe
 
         if (tracing != null) {
             if (JaegerTracing.TYPE_JAEGER.equals(tracing.getType())) {
-                config.setConfigOption("interceptor.classes", JaegerTracing.CONSUMER_INTERCEPTOR_CLASS_NAME);
+                LOGGER.warnCr(reconciliation, "Tracing type \"{}\" is not supported anymore and will be ignored", JaegerTracing.TYPE_JAEGER);
             } else if (OpenTelemetryTracing.TYPE_OPENTELEMETRY.equals(tracing.getType())) {
                 config.setConfigOption("interceptor.classes", OpenTelemetryTracing.CONSUMER_INTERCEPTOR_CLASS_NAME);
             }
@@ -348,7 +340,7 @@ public class KafkaMirrorMakerCluster extends AbstractModel implements SupportsMe
 
         if (tracing != null) {
             if (JaegerTracing.TYPE_JAEGER.equals(tracing.getType())) {
-                config.setConfigOption("interceptor.classes", JaegerTracing.PRODUCER_INTERCEPTOR_CLASS_NAME);
+                LOGGER.warnCr(reconciliation, "Tracing type \"{}\" is not supported anymore and will be ignored", JaegerTracing.TYPE_JAEGER);
             } else if (OpenTelemetryTracing.TYPE_OPENTELEMETRY.equals(tracing.getType())) {
                 config.setConfigOption("interceptor.classes", OpenTelemetryTracing.PRODUCER_INTERCEPTOR_CLASS_NAME);
             }
@@ -383,9 +375,9 @@ public class KafkaMirrorMakerCluster extends AbstractModel implements SupportsMe
             varList.add(ContainerUtils.createEnvVar(ENV_VAR_STRIMZI_TRACING, tracing.getType()));
         }
 
-        ModelUtils.heapOptions(varList, 75, 0L, jvmOptions, resources);
-        ModelUtils.jvmPerformanceOptions(varList, jvmOptions);
-        ModelUtils.jvmSystemProperties(varList, jvmOptions);
+        JvmOptionUtils.heapOptions(varList, 75, 0L, jvmOptions, resources);
+        JvmOptionUtils.jvmPerformanceOptions(varList, jvmOptions);
+        JvmOptionUtils.jvmSystemProperties(varList, jvmOptions);
 
         /* consumer */
         addConsumerEnvVars(varList);
@@ -399,7 +391,7 @@ public class KafkaMirrorMakerCluster extends AbstractModel implements SupportsMe
                 String.valueOf(readinessProbeOptions.getPeriodSeconds() != null ? readinessProbeOptions.getPeriodSeconds() : DEFAULT_HEALTHCHECK_PERIOD)));
 
         // Add shared environment variables used for all containers
-        varList.addAll(ContainerUtils.requiredEnvVars());
+        varList.addAll(sharedEnvironmentProvider.variables());
 
         ContainerUtils.addContainerEnvsToExistingEnvs(reconciliation, varList, templateContainer);
 
@@ -467,15 +459,6 @@ public class KafkaMirrorMakerCluster extends AbstractModel implements SupportsMe
         return PodDisruptionBudgetUtils.createPodDisruptionBudget(componentName, namespace, labels, ownerReference, templatePodDisruptionBudget);
     }
 
-    /**
-     * Generates the PodDisruptionBudgetV1Beta1
-     *
-     * @return The pod disruption budget V1Beta1.
-     */
-    public io.fabric8.kubernetes.api.model.policy.v1beta1.PodDisruptionBudget generatePodDisruptionBudgetV1Beta1() {
-        return PodDisruptionBudgetUtils.createPodDisruptionBudgetV1Beta1(componentName, namespace, labels, ownerReference, templatePodDisruptionBudget);
-    }
-
     protected String getInclude() {
         return include;
     }
@@ -495,7 +478,7 @@ public class KafkaMirrorMakerCluster extends AbstractModel implements SupportsMe
                         namespace,
                         labels,
                         ownerReference,
-                        MetricsAndLoggingUtils.generateMetricsAndLogConfigMapData(reconciliation, this, metricsAndLogging)
+                        ConfigMapUtils.generateMetricsAndLogConfigMapData(reconciliation, this, metricsAndLogging)
                 );
     }
 

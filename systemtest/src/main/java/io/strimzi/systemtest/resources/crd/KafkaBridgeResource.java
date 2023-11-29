@@ -35,13 +35,19 @@ public class KafkaBridgeResource implements ResourceType<KafkaBridge> {
     }
     @Override
     public void create(KafkaBridge resource) {
-        kafkaBridgeClient().inNamespace(resource.getMetadata().getNamespace()).resource(resource).createOrReplace();
+        kafkaBridgeClient().inNamespace(resource.getMetadata().getNamespace()).resource(resource).create();
     }
     @Override
     public void delete(KafkaBridge resource) {
         kafkaBridgeClient().inNamespace(resource.getMetadata().getNamespace()).withName(
             resource.getMetadata().getName()).withPropagationPolicy(DeletionPropagation.FOREGROUND).delete();
     }
+
+    @Override
+    public void update(KafkaBridge resource) {
+        kafkaBridgeClient().inNamespace(resource.getMetadata().getNamespace()).resource(resource).update();
+    }
+
     @Override
     public boolean waitForReadiness(KafkaBridge resource) {
         return ResourceManager.waitForResourceStatus(kafkaBridgeClient(), resource, CustomResourceStatus.Ready);

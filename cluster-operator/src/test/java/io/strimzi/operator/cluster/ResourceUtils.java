@@ -44,9 +44,11 @@ import io.strimzi.api.kafka.model.listener.arraylistener.KafkaListenerType;
 import io.strimzi.api.kafka.model.storage.EphemeralStorage;
 import io.strimzi.api.kafka.model.storage.SingleVolumeStorage;
 import io.strimzi.api.kafka.model.storage.Storage;
-import io.strimzi.operator.cluster.model.Ca;
+import io.strimzi.operator.cluster.operator.assembly.PreventBrokerScaleDownCheck;
+import io.strimzi.operator.common.model.Ca;
 import io.strimzi.operator.cluster.model.KafkaVersion;
 import io.strimzi.operator.cluster.operator.resource.ResourceOperatorSupplier;
+import io.strimzi.operator.cluster.ClusterOperatorConfig.ClusterOperatorConfigBuilder;
 import io.strimzi.operator.cluster.operator.resource.StatefulSetOperator;
 import io.strimzi.operator.cluster.operator.resource.ZookeeperLeaderFinder;
 import io.strimzi.operator.cluster.operator.resource.ZookeeperScaler;
@@ -56,6 +58,7 @@ import io.strimzi.operator.common.AdminClientProvider;
 import io.strimzi.operator.common.BackOff;
 import io.strimzi.operator.common.MetricsProvider;
 import io.strimzi.operator.common.MicrometerMetricsProvider;
+import io.strimzi.operator.cluster.model.MockSharedEnvironmentProvider;
 import io.strimzi.operator.common.Reconciliation;
 import io.strimzi.operator.common.model.Labels;
 import io.strimzi.operator.common.operator.resource.BuildConfigOperator;
@@ -69,7 +72,6 @@ import io.strimzi.operator.common.operator.resource.IngressOperator;
 import io.strimzi.operator.common.operator.resource.NetworkPolicyOperator;
 import io.strimzi.operator.common.operator.resource.NodeOperator;
 import io.strimzi.operator.common.operator.resource.PodDisruptionBudgetOperator;
-import io.strimzi.operator.common.operator.resource.PodDisruptionBudgetV1Beta1Operator;
 import io.strimzi.operator.common.operator.resource.PodOperator;
 import io.strimzi.operator.common.operator.resource.PvcOperator;
 import io.strimzi.operator.common.operator.resource.RoleBindingOperator;
@@ -86,31 +88,40 @@ import io.vertx.core.Vertx;
 import io.vertx.core.net.NetClientOptions;
 import io.vertx.core.net.PemKeyCertOptions;
 import io.vertx.core.net.PemTrustOptions;
+import java.lang.reflect.InvocationTargetException;
+import java.util.OptionalLong;
 import org.apache.kafka.clients.admin.Admin;
 import org.apache.kafka.clients.admin.AdminClient;
 import org.apache.kafka.clients.admin.DescribeClusterResult;
 import org.apache.kafka.clients.admin.DescribeConfigsResult;
+import org.apache.kafka.clients.admin.DescribeFeaturesResult;
+import org.apache.kafka.clients.admin.DescribeMetadataQuorumResult;
 import org.apache.kafka.clients.admin.DescribeTopicsResult;
+import org.apache.kafka.clients.admin.FeatureMetadata;
+import org.apache.kafka.clients.admin.FinalizedVersionRange;
 import org.apache.kafka.clients.admin.ListTopicsResult;
+import org.apache.kafka.clients.admin.QuorumInfo;
 import org.apache.kafka.clients.admin.TopicListing;
 import org.apache.kafka.common.KafkaFuture;
 import org.apache.kafka.common.Node;
 import org.apache.kafka.common.internals.KafkaFutureImpl;
+import org.apache.kafka.server.common.MetadataVersion;
 
 import java.io.IOException;
 import java.lang.reflect.Constructor;
 import java.nio.file.Files;
 import java.nio.file.Paths;
-import java.util.Collection;
-import java.util.List;
+import java.util.HashMap;
 import java.util.Map;
+import java.util.List;
+import java.util.Optional;
 import java.util.Properties;
 
 import static java.util.Collections.emptyMap;
-import static java.util.Collections.singleton;
 import static java.util.Collections.singletonList;
 import static java.util.Collections.singletonMap;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyCollection;
 import static org.mockito.ArgumentMatchers.anyInt;
 import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.ArgumentMatchers.anyString;
@@ -469,7 +480,103 @@ public class ResourceUtils {
             };
     }
 
+    public static Admin adminClient()   {
+        Admin mock = mock(AdminClient.class);
+        DescribeClusterResult dcr;
+        try {
+            Constructor<DescribeClusterResult> declaredConstructor = DescribeClusterResult.class.getDeclaredConstructor(KafkaFuture.class, KafkaFuture.class, KafkaFuture.class, KafkaFuture.class);
+            declaredConstructor.setAccessible(true);
+            KafkaFuture<Node> objectKafkaFuture = KafkaFuture.completedFuture(new Node(0, "localhost", 9091));
+            KafkaFuture<String> stringKafkaFuture = KafkaFuture.completedFuture("CLUSTERID");
+            dcr = declaredConstructor.newInstance(null, objectKafkaFuture, stringKafkaFuture, null);
+        } catch (ReflectiveOperationException e) {
+            throw new RuntimeException(e);
+        }
+        when(mock.describeCluster()).thenReturn(dcr);
+
+        ListTopicsResult ltr;
+        try {
+            Constructor<ListTopicsResult> declaredConstructor = ListTopicsResult.class.getDeclaredConstructor(KafkaFuture.class);
+            declaredConstructor.setAccessible(true);
+            KafkaFuture<Map<String, TopicListing>> future = KafkaFuture.completedFuture(emptyMap());
+            ltr = declaredConstructor.newInstance(future);
+        } catch (ReflectiveOperationException e) {
+            throw new RuntimeException(e);
+        }
+        when(mock.listTopics(any())).thenReturn(ltr);
+
+        DescribeTopicsResult dtr;
+        try {
+            Constructor<DescribeTopicsResult> declaredConstructor = DescribeTopicsResult.class.getDeclaredConstructor(Map.class);
+            declaredConstructor.setAccessible(true);
+            dtr = declaredConstructor.newInstance(emptyMap());
+        } catch (ReflectiveOperationException e) {
+            throw new RuntimeException(e);
+        }
+        when(mock.describeTopics(anyCollection())).thenReturn(dtr);
+
+        DescribeConfigsResult dcfr;
+        try {
+            Constructor<DescribeConfigsResult> declaredConstructor = DescribeConfigsResult.class.getDeclaredConstructor(Map.class);
+            declaredConstructor.setAccessible(true);
+            dcfr = declaredConstructor.newInstance(emptyMap());
+        } catch (ReflectiveOperationException e) {
+            throw new RuntimeException(e);
+        }
+        when(mock.describeConfigs(any())).thenReturn(dcfr);
+
+        // Mocks the describeFeatures() call used in KRaft to manege metadata version
+        DescribeFeaturesResult dfr;
+        try {
+            Constructor<DescribeFeaturesResult> declaredConstructor = DescribeFeaturesResult.class.getDeclaredConstructor(KafkaFuture.class);
+            declaredConstructor.setAccessible(true);
+            Constructor<FeatureMetadata> declaredConstructor2 = FeatureMetadata.class.getDeclaredConstructor(Map.class, Optional.class, Map.class);
+            declaredConstructor2.setAccessible(true);
+            Constructor<FinalizedVersionRange> declaredConstructor3 = FinalizedVersionRange.class.getDeclaredConstructor(Short.TYPE, Short.TYPE);
+            declaredConstructor3.setAccessible(true);
+
+            short metadataLevel = MetadataVersion.fromVersionString(KafkaVersionTestUtils.getKafkaVersionLookup().defaultVersion().metadataVersion()).featureLevel();
+            FinalizedVersionRange finalizedVersionRange = declaredConstructor3.newInstance(metadataLevel, metadataLevel);
+            FeatureMetadata featureMetadata = declaredConstructor2.newInstance(Map.of(MetadataVersion.FEATURE_NAME, finalizedVersionRange), Optional.ofNullable(null), Map.of());
+            KafkaFuture<FeatureMetadata> kafkaFuture = KafkaFutureImpl.completedFuture(featureMetadata);
+            dfr = declaredConstructor.newInstance(kafkaFuture);
+        } catch (ReflectiveOperationException e) {
+            throw new RuntimeException(e);
+        }
+        when(mock.describeFeatures()).thenReturn(dfr);
+
+        DescribeMetadataQuorumResult dmqr;
+        try {
+            Constructor<DescribeMetadataQuorumResult> declaredConstructor = DescribeMetadataQuorumResult.class.getDeclaredConstructor(KafkaFuture.class);
+            QuorumInfo qrminfo = mock(QuorumInfo.class);
+            KafkaFuture<QuorumInfo> future = KafkaFuture.completedFuture(qrminfo);
+            when(qrminfo.leaderId()).thenReturn(0);
+            QuorumInfo.ReplicaState replicaState0 = mock(QuorumInfo.ReplicaState.class);
+            QuorumInfo.ReplicaState replicaState1 = mock(QuorumInfo.ReplicaState.class);
+            QuorumInfo.ReplicaState replicaState2 = mock(QuorumInfo.ReplicaState.class);
+            when(qrminfo.voters()).thenReturn(List.of(replicaState0, replicaState1, replicaState2));
+            when(replicaState0.replicaId()).thenReturn(0);
+            when(replicaState1.replicaId()).thenReturn(1);
+            when(replicaState2.replicaId()).thenReturn(2);
+            when(replicaState0.lastCaughtUpTimestamp()).thenReturn(OptionalLong.of(0L));
+            when(replicaState1.lastCaughtUpTimestamp()).thenReturn(OptionalLong.of(0L));
+            when(replicaState2.lastCaughtUpTimestamp()).thenReturn(OptionalLong.of(0L));
+            declaredConstructor.setAccessible(true);
+            dmqr = declaredConstructor.newInstance(future);
+        } catch (NoSuchMethodException | InstantiationException | IllegalAccessException |
+                 InvocationTargetException e) {
+            throw new RuntimeException(e);
+        }
+        when(mock.describeMetadataQuorum()).thenReturn(dmqr);
+
+        return mock;
+    }
+
     public static AdminClientProvider adminClientProvider() {
+        return adminClientProvider(adminClient());
+    }
+
+    public static AdminClientProvider adminClientProvider(Admin mockAdminClient) {
         return new AdminClientProvider() {
             @Override
             public Admin createAdminClient(String bootstrapHostnames, Secret clusterCaCertSecret, Secret keyCertSecret, String keyCertName) {
@@ -478,50 +585,7 @@ public class ResourceUtils {
 
             @Override
             public Admin createAdminClient(String bootstrapHostnames, Secret clusterCaCertSecret, Secret keyCertSecret, String keyCertName, Properties config) {
-                Admin mock = mock(AdminClient.class);
-                DescribeClusterResult dcr;
-                try {
-                    Constructor<DescribeClusterResult> declaredConstructor = DescribeClusterResult.class.getDeclaredConstructor(KafkaFuture.class, KafkaFuture.class, KafkaFuture.class, KafkaFuture.class);
-                    declaredConstructor.setAccessible(true);
-                    KafkaFuture<Node> objectKafkaFuture = KafkaFutureImpl.completedFuture(new Node(0, "localhost", 9091));
-                    KafkaFuture<String> stringKafkaFuture = KafkaFutureImpl.completedFuture("CLUSTERID");
-                    dcr = declaredConstructor.newInstance(null, objectKafkaFuture, stringKafkaFuture, null);
-                } catch (ReflectiveOperationException e) {
-                    throw new RuntimeException(e);
-                }
-                when(mock.describeCluster()).thenReturn(dcr);
-
-                ListTopicsResult ltr;
-                try {
-                    Constructor<ListTopicsResult> declaredConstructor = ListTopicsResult.class.getDeclaredConstructor(KafkaFuture.class);
-                    declaredConstructor.setAccessible(true);
-                    KafkaFuture<Map<String, TopicListing>> future = KafkaFutureImpl.completedFuture(emptyMap());
-                    ltr = declaredConstructor.newInstance(future);
-                } catch (ReflectiveOperationException e) {
-                    throw new RuntimeException(e);
-                }
-                when(mock.listTopics(any())).thenReturn(ltr);
-
-                DescribeTopicsResult dtr;
-                try {
-                    Constructor<DescribeTopicsResult> declaredConstructor = DescribeTopicsResult.class.getDeclaredConstructor(Map.class);
-                    declaredConstructor.setAccessible(true);
-                    dtr = declaredConstructor.newInstance(emptyMap());
-                } catch (ReflectiveOperationException e) {
-                    throw new RuntimeException(e);
-                }
-                when(mock.describeTopics(any(Collection.class))).thenReturn(dtr);
-
-                DescribeConfigsResult dcfr;
-                try {
-                    Constructor<DescribeConfigsResult> declaredConstructor = DescribeConfigsResult.class.getDeclaredConstructor(Map.class);
-                    declaredConstructor.setAccessible(true);
-                    dcfr = declaredConstructor.newInstance(emptyMap());
-                } catch (ReflectiveOperationException e) {
-                    throw new RuntimeException(e);
-                }
-                when(mock.describeConfigs(any())).thenReturn(dcfr);
-                return mock;
+                return mockAdminClient;
             }
         };
     }
@@ -558,11 +622,11 @@ public class ResourceUtils {
                 mock(ClusterRoleBindingOperator.class),
                 mock(NetworkPolicyOperator.class),
                 mock(PodDisruptionBudgetOperator.class),
-                mock(PodDisruptionBudgetV1Beta1Operator.class),
                 mock(PodOperator.class),
                 mock(IngressOperator.class),
                 mock(BuildConfigOperator.class),
                 mock(BuildOperator.class),
+                mock(CrdOperator.class),
                 mock(CrdOperator.class),
                 mock(CrdOperator.class),
                 mock(CrdOperator.class),
@@ -577,7 +641,9 @@ public class ResourceUtils {
                 metricsProvider(),
                 adminClientProvider(),
                 mock(ZookeeperLeaderFinder.class),
-                mock(KubernetesRestartEventPublisher.class));
+                mock(KubernetesRestartEventPublisher.class),
+                new MockSharedEnvironmentProvider(),
+                mock(PreventBrokerScaleDownCheck.class));
 
         when(supplier.secretOperations.getAsync(any(), any())).thenReturn(Future.succeededFuture());
         when(supplier.serviceAccountOperations.reconcile(any(), anyString(), anyString(), any())).thenReturn(Future.succeededFuture());
@@ -614,48 +680,22 @@ public class ResourceUtils {
         return supplier;
     }
 
-    public static ClusterOperatorConfig dummyClusterOperatorConfig(KafkaVersion.Lookup versions, long operationTimeoutMs, String featureGates) {
-        return new ClusterOperatorConfig(
-                singleton("dummy"),
-                60_000,
-                operationTimeoutMs,
-                300_000,
-                false,
-                true,
-                versions,
-                null,
-                null,
-                null,
-                null,
-                null,
-                featureGates,
-                10,
-                10_000,
-                30,
-                false,
-                1024,
-                "cluster-operator-name",
-                ClusterOperatorConfig.DEFAULT_POD_SECURITY_PROVIDER_CLASS, null);
-    }
+    public static ClusterOperatorConfig dummyClusterOperatorConfig() {
 
-    public static ClusterOperatorConfig dummyClusterOperatorConfig(KafkaVersion.Lookup versions, long operationTimeoutMs) {
-        return dummyClusterOperatorConfig(versions, operationTimeoutMs, "");
+        Map<String, String> envVars = new HashMap<>();
+
+        return ClusterOperatorConfig.buildFromMap(envVars, KafkaVersionTestUtils.getKafkaVersionLookup());
     }
 
     public static ClusterOperatorConfig dummyClusterOperatorConfig(KafkaVersion.Lookup versions) {
-        return dummyClusterOperatorConfig(versions, ClusterOperatorConfig.DEFAULT_OPERATION_TIMEOUT_MS, "");
-    }
-
-    public static ClusterOperatorConfig dummyClusterOperatorConfig(long operationTimeoutMs) {
-        return dummyClusterOperatorConfig(KafkaVersionTestUtils.getKafkaVersionLookup(), operationTimeoutMs, "");
-    }
-
-    public static ClusterOperatorConfig dummyClusterOperatorConfig() {
-        return dummyClusterOperatorConfig(KafkaVersionTestUtils.getKafkaVersionLookup(), ClusterOperatorConfig.DEFAULT_OPERATION_TIMEOUT_MS, "");
+        return new ClusterOperatorConfigBuilder(dummyClusterOperatorConfig(), versions)
+                .build();
     }
 
     public static ClusterOperatorConfig dummyClusterOperatorConfig(String featureGates) {
-        return dummyClusterOperatorConfig(KafkaVersionTestUtils.getKafkaVersionLookup(), ClusterOperatorConfig.DEFAULT_OPERATION_TIMEOUT_MS, featureGates);
+        return new ClusterOperatorConfigBuilder(dummyClusterOperatorConfig(), KafkaVersionTestUtils.getKafkaVersionLookup())
+                .with(ClusterOperatorConfig.FEATURE_GATES.key(), featureGates)
+                .build();
     }
 
     /**

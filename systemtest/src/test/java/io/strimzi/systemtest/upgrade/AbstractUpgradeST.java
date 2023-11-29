@@ -18,10 +18,10 @@ import io.strimzi.api.kafka.model.connect.build.JarArtifactBuilder;
 import io.strimzi.api.kafka.model.connect.build.Plugin;
 import io.strimzi.api.kafka.model.connect.build.PluginBuilder;
 import io.strimzi.operator.common.Annotations;
-import io.strimzi.operator.common.Util;
 import io.strimzi.operator.common.model.Labels;
 import io.strimzi.systemtest.AbstractST;
 import io.strimzi.systemtest.Environment;
+import io.strimzi.systemtest.TestConstants;
 import io.strimzi.systemtest.kafkaclients.internalClients.KafkaClients;
 import io.strimzi.systemtest.kafkaclients.internalClients.KafkaClientsBuilder;
 import io.strimzi.systemtest.resources.ResourceManager;
@@ -36,15 +36,15 @@ import io.strimzi.systemtest.utils.FileUtils;
 import io.strimzi.systemtest.utils.RollingUpdateUtils;
 import io.strimzi.systemtest.utils.StUtils;
 import io.strimzi.systemtest.utils.TestKafkaVersion;
+import io.strimzi.systemtest.templates.crd.KafkaTemplates;
 import io.strimzi.systemtest.utils.kafkaUtils.KafkaConnectUtils;
 import io.strimzi.systemtest.utils.kafkaUtils.KafkaConnectorUtils;
+import io.strimzi.systemtest.utils.kafkaUtils.KafkaTopicUtils;
 import io.strimzi.systemtest.utils.kafkaUtils.KafkaUserUtils;
 import io.strimzi.systemtest.utils.kafkaUtils.KafkaUtils;
-import io.strimzi.systemtest.templates.crd.KafkaTemplates;
 import io.strimzi.systemtest.utils.kubeUtils.controllers.DeploymentUtils;
 import io.strimzi.systemtest.utils.kubeUtils.objects.PodUtils;
 import io.strimzi.test.TestUtils;
-import io.strimzi.systemtest.annotations.IsolatedSuite;
 import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
 import org.junit.jupiter.api.extension.ExtensionContext;
@@ -52,15 +52,16 @@ import org.junit.jupiter.api.extension.ExtensionContext;
 import java.io.File;
 import java.io.IOException;
 import java.util.Arrays;
+import java.util.Collections;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Random;
 
-import static io.strimzi.systemtest.Constants.DEFAULT_SINK_FILE_PATH;
-import static io.strimzi.systemtest.Constants.PATH_TO_KAFKA_TOPIC_CONFIG;
-import static io.strimzi.systemtest.Constants.PATH_TO_PACKAGING_EXAMPLES;
+import static io.strimzi.systemtest.TestConstants.DEFAULT_SINK_FILE_PATH;
+import static io.strimzi.systemtest.TestConstants.PATH_TO_KAFKA_TOPIC_CONFIG;
+import static io.strimzi.systemtest.TestConstants.PATH_TO_PACKAGING_EXAMPLES;
 import static io.strimzi.test.k8s.KubeClusterResource.cmdKubeClient;
 import static io.strimzi.test.k8s.KubeClusterResource.kubeClient;
 import static org.hamcrest.CoreMatchers.containsString;
@@ -68,7 +69,6 @@ import static org.hamcrest.CoreMatchers.is;
 import static org.hamcrest.MatcherAssert.assertThat;
 import static org.junit.jupiter.api.Assertions.fail;
 
-@IsolatedSuite
 public class AbstractUpgradeST extends AbstractST {
 
     private static final Logger LOGGER = LogManager.getLogger(AbstractUpgradeST.class);
@@ -99,11 +99,11 @@ public class AbstractUpgradeST extends AbstractST {
     protected File kafkaYaml;
 
     protected void makeSnapshots() {
-        coPods = DeploymentUtils.depSnapshot(clusterOperator.getDeploymentNamespace(), ResourceManager.getCoDeploymentName());
-        zkPods = PodUtils.podSnapshot(clusterOperator.getDeploymentNamespace(), zkSelector);
-        kafkaPods = PodUtils.podSnapshot(clusterOperator.getDeploymentNamespace(), kafkaSelector);
-        eoPods = DeploymentUtils.depSnapshot(clusterOperator.getDeploymentNamespace(), KafkaResources.entityOperatorDeploymentName(clusterName));
-        connectPods = PodUtils.podSnapshot(clusterOperator.getDeploymentNamespace(), connectLabelSelector);
+        coPods = DeploymentUtils.depSnapshot(TestConstants.CO_NAMESPACE, ResourceManager.getCoDeploymentName());
+        zkPods = PodUtils.podSnapshot(TestConstants.CO_NAMESPACE, zkSelector);
+        kafkaPods = PodUtils.podSnapshot(TestConstants.CO_NAMESPACE, kafkaSelector);
+        eoPods = DeploymentUtils.depSnapshot(TestConstants.CO_NAMESPACE, KafkaResources.entityOperatorDeploymentName(clusterName));
+        connectPods = PodUtils.podSnapshot(TestConstants.CO_NAMESPACE, connectLabelSelector);
     }
 
     @SuppressWarnings("CyclomaticComplexity")
@@ -148,8 +148,8 @@ public class AbstractUpgradeST extends AbstractST {
             if (kafkaVersionFromProcedure != null && !kafkaVersionFromProcedure.isEmpty() && !kafkaVersionFromCR.contains(kafkaVersionFromProcedure) && extensionContext.getTestClass().get().getSimpleName().toLowerCase(Locale.ROOT).contains("upgrade")) {
                 LOGGER.info("Set Kafka version to " + kafkaVersionFromProcedure);
                 cmdKubeClient().patchResource(getResourceApiVersion(Kafka.RESOURCE_PLURAL, operatorVersion), clusterName, "/spec/kafka/version", kafkaVersionFromProcedure);
-                LOGGER.info("Wait until Kafka rolling update is finished");
-                kafkaPods = RollingUpdateUtils.waitTillComponentHasRolled(clusterOperator.getDeploymentNamespace(), kafkaSelector, 3, kafkaPods);
+                LOGGER.info("Waiting for Kafka rolling update to finish");
+                kafkaPods = RollingUpdateUtils.waitTillComponentHasRolled(TestConstants.CO_NAMESPACE, kafkaSelector, 3, kafkaPods);
             }
 
             String logMessageVersion = versionModificationData.getProcedures().getLogMessageVersion();
@@ -169,8 +169,8 @@ public class AbstractUpgradeST extends AbstractST {
 
                 if ((currentInterBrokerProtocol != null && !currentInterBrokerProtocol.equals(interBrokerProtocolVersion)) ||
                         (currentLogMessageFormat != null && !currentLogMessageFormat.isEmpty() && !currentLogMessageFormat.equals(logMessageVersion))) {
-                    LOGGER.info("Wait until Kafka rolling update is finished");
-                    kafkaPods = RollingUpdateUtils.waitTillComponentHasRolled(clusterOperator.getDeploymentNamespace(), kafkaSelector, 3, kafkaPods);
+                    LOGGER.info("Waiting for Kafka rolling update to finish");
+                    kafkaPods = RollingUpdateUtils.waitTillComponentHasRolled(TestConstants.CO_NAMESPACE, kafkaSelector, 3, kafkaPods);
                 }
                 makeSnapshots();
             }
@@ -178,8 +178,8 @@ public class AbstractUpgradeST extends AbstractST {
             if (kafkaVersionFromProcedure != null && !kafkaVersionFromProcedure.isEmpty() && !kafkaVersionFromCR.contains(kafkaVersionFromProcedure) && extensionContext.getTestClass().get().getSimpleName().toLowerCase(Locale.ROOT).contains("downgrade")) {
                 LOGGER.info("Set Kafka version to " + kafkaVersionFromProcedure);
                 cmdKubeClient().patchResource(getResourceApiVersion(Kafka.RESOURCE_PLURAL, operatorVersion), clusterName, "/spec/kafka/version", kafkaVersionFromProcedure);
-                LOGGER.info("Wait until Kafka rolling update is finished");
-                kafkaPods = RollingUpdateUtils.waitTillComponentHasRolled(clusterOperator.getDeploymentNamespace(), kafkaSelector, kafkaPods);
+                LOGGER.info("Waiting for Kafka rolling update to finish");
+                kafkaPods = RollingUpdateUtils.waitTillComponentHasRolled(TestConstants.CO_NAMESPACE, kafkaSelector, kafkaPods);
             }
         }
     }
@@ -187,36 +187,36 @@ public class AbstractUpgradeST extends AbstractST {
     protected void logPodImages(String clusterName) {
         List<Pod> pods = kubeClient().listPods(KafkaResource.getLabelSelector(clusterName, KafkaResources.zookeeperStatefulSetName(clusterName)));
         for (Pod pod : pods) {
-            LOGGER.info("Pod {} has image {}", pod.getMetadata().getName(), pod.getSpec().getContainers().get(0).getImage());
+            LOGGER.info("Pod: {}/{} has image {}", pod.getMetadata().getNamespace(), pod.getMetadata().getName(), pod.getSpec().getContainers().get(0).getImage());
         }
         pods = kubeClient().listPods(KafkaResource.getLabelSelector(clusterName, KafkaResources.kafkaStatefulSetName(clusterName)));
         for (Pod pod : pods) {
-            LOGGER.info("Pod {} has image {}", pod.getMetadata().getName(), pod.getSpec().getContainers().get(0).getImage());
+            LOGGER.info("Pod: {}/{} has image {}", pod.getMetadata().getNamespace(), pod.getMetadata().getName(), pod.getSpec().getContainers().get(0).getImage());
         }
         pods = kubeClient().listPods(kubeClient().getDeploymentSelectors(KafkaResources.entityOperatorDeploymentName(clusterName)));
         for (Pod pod : pods) {
-            LOGGER.info("Pod {} has image {}", pod.getMetadata().getName(), pod.getSpec().getContainers().get(0).getImage());
-            LOGGER.info("Pod {} has image {}", pod.getMetadata().getName(), pod.getSpec().getContainers().get(1).getImage());
+            LOGGER.info("Pod: {}/{} has image {}", pod.getMetadata().getNamespace(), pod.getMetadata().getName(), pod.getSpec().getContainers().get(0).getImage());
+            LOGGER.info("Pod: {}/{} has image {}", pod.getMetadata().getNamespace(), pod.getMetadata().getName(), pod.getSpec().getContainers().get(1).getImage());
         }
     }
 
     protected void waitForKafkaClusterRollingUpdate() {
-        LOGGER.info("Waiting for ZK StatefulSet roll");
-        zkPods = RollingUpdateUtils.waitTillComponentHasRolledAndPodsReady(clusterOperator.getDeploymentNamespace(), zkSelector, 3, zkPods);
-        LOGGER.info("Waiting for Kafka StatefulSet roll");
-        kafkaPods = RollingUpdateUtils.waitTillComponentHasRolledAndPodsReady(clusterOperator.getDeploymentNamespace(), kafkaSelector, 3, kafkaPods);
+        LOGGER.info("Waiting for ZK StrimziPodSet roll");
+        zkPods = RollingUpdateUtils.waitTillComponentHasRolledAndPodsReady(TestConstants.CO_NAMESPACE, zkSelector, 3, zkPods);
+        LOGGER.info("Waiting for Kafka StrimziPodSet roll");
+        kafkaPods = RollingUpdateUtils.waitTillComponentHasRolledAndPodsReady(TestConstants.CO_NAMESPACE, kafkaSelector, 3, kafkaPods);
         LOGGER.info("Waiting for EO Deployment roll");
         // Check the TO and UO also got upgraded
-        eoPods = DeploymentUtils.waitTillDepHasRolled(clusterOperator.getDeploymentNamespace(), KafkaResources.entityOperatorDeploymentName(clusterName), 1, eoPods);
+        eoPods = DeploymentUtils.waitTillDepHasRolled(TestConstants.CO_NAMESPACE, KafkaResources.entityOperatorDeploymentName(clusterName), 1, eoPods);
     }
 
     protected void waitForReadinessOfKafkaCluster() {
-        LOGGER.info("Waiting for Zookeeper StatefulSet");
-        RollingUpdateUtils.waitForComponentAndPodsReady(clusterOperator.getDeploymentNamespace(), zkSelector, 3);
-        LOGGER.info("Waiting for Kafka StatefulSet");
-        RollingUpdateUtils.waitForComponentAndPodsReady(clusterOperator.getDeploymentNamespace(), kafkaSelector, 3);
+        LOGGER.info("Waiting for ZooKeeper StrimziPodSet");
+        RollingUpdateUtils.waitForComponentAndPodsReady(TestConstants.CO_NAMESPACE, zkSelector, 3);
+        LOGGER.info("Waiting for Kafka StrimziPodSet");
+        RollingUpdateUtils.waitForComponentAndPodsReady(TestConstants.CO_NAMESPACE, kafkaSelector, 3);
         LOGGER.info("Waiting for EO Deployment");
-        DeploymentUtils.waitForDeploymentAndPodsReady(clusterOperator.getDeploymentNamespace(), KafkaResources.entityOperatorDeploymentName(clusterName), 1);
+        DeploymentUtils.waitForDeploymentAndPodsReady(TestConstants.CO_NAMESPACE, KafkaResources.entityOperatorDeploymentName(clusterName), 1);
     }
 
     protected void  changeClusterOperator(BundleVersionModificationData versionModificationData, String namespace, ExtensionContext extensionContext) throws IOException {
@@ -247,8 +247,6 @@ public class AbstractUpgradeST extends AbstractST {
                 cmdKubeClient().replaceContent(TestUtils.getContent(f, TestUtils::toYamlString));
             }
         });
-        // Set info that CO is already installed
-        extensionContext.getStore(ExtensionContext.Namespace.GLOBAL).put(io.strimzi.systemtest.Constants.PREPARE_OPERATOR_ENV_KEY + namespace, false);
     }
 
     protected void deleteInstalledYamls(File root, String namespace) {
@@ -258,6 +256,7 @@ public class AbstractUpgradeST extends AbstractST {
         }
         if (kafkaTopicYaml != null) {
             LOGGER.info("Deleting KafkaTopic configuration files");
+            KafkaTopicUtils.setFinalizersInAllTopicsToNull(namespace);
             cmdKubeClient().delete(kafkaTopicYaml);
         }
         if (kafkaYaml != null) {
@@ -310,14 +309,14 @@ public class AbstractUpgradeST extends AbstractST {
         List<Pod> pods1 = kubeClient().listPods(matchLabels);
         for (Pod pod : pods1) {
             if (!image.equals(pod.getSpec().getContainers().get(container).getImage())) {
-                LOGGER.debug("Expected image for pod {}: {} \nCurrent image: {}", pod.getMetadata().getName(), image, pod.getSpec().getContainers().get(container).getImage());
-                assertThat("Used image for pod " + pod.getMetadata().getName() + " is not valid!", pod.getSpec().getContainers().get(container).getImage(), containsString(image));
+                LOGGER.debug("Expected image for Pod: {}/{}: {} \nCurrent image: {}", pod.getMetadata().getNamespace(), pod.getMetadata().getName(), image, pod.getSpec().getContainers().get(container).getImage());
+                assertThat("Used image for Pod: " + pod.getMetadata().getNamespace() + "/" + pod.getMetadata().getName() + " is not valid!", pod.getSpec().getContainers().get(container).getImage(), containsString(image));
             }
         }
     }
 
     protected void setupEnvAndUpgradeClusterOperator(ExtensionContext extensionContext, BundleVersionModificationData upgradeData, TestStorage testStorage, UpgradeKafkaVersion upgradeKafkaVersion, String namespace) throws IOException {
-        LOGGER.info("Test upgrade of ClusterOperator from version {} to version {}", upgradeData.getFromVersion(), upgradeData.getToVersion());
+        LOGGER.info("Test upgrade of Cluster Operator from version: {} to version: {}", upgradeData.getFromVersion(), upgradeData.getToVersion());
         cluster.setNamespace(namespace);
 
         String operatorVersion = upgradeData.getFromVersion();
@@ -369,8 +368,8 @@ public class AbstractUpgradeST extends AbstractST {
                 .withDelayMs(1000)
                 .build();
 
-            resourceManager.createResource(extensionContext, kafkaBasicClientJob.producerStrimzi());
-            resourceManager.createResource(extensionContext, kafkaBasicClientJob.consumerStrimzi());
+            resourceManager.createResourceWithWait(extensionContext, kafkaBasicClientJob.producerStrimzi());
+            resourceManager.createResourceWithWait(extensionContext, kafkaBasicClientJob.consumerStrimzi());
             // ##############################
         }
 
@@ -385,10 +384,10 @@ public class AbstractUpgradeST extends AbstractST {
             String listedTopics = cmdKubeClient().getResources(getResourceApiVersion(KafkaTopic.RESOURCE_PLURAL));
             int additionalTopics = upgradeData.getAdditionalTopics();
             assertThat("KafkaTopic list doesn't have expected size", Long.valueOf(listedTopics.lines().count() - 1).intValue(), is(expectedTopicCount + additionalTopics));
-            assertThat("KafkaTopic " + topicName + " is not in expected topic list",
+            assertThat("KafkaTopic " + topicName + " is not in expected Topic list",
                     listedTopics.contains(topicName), is(true));
             for (int x = 0; x < upgradeTopicCount; x++) {
-                assertThat("KafkaTopic " + topicName + "-" + x + " is not in expected topic list", listedTopics.contains(topicName + "-" + x), is(true));
+                assertThat("KafkaTopic " + topicName + "-" + x + " is not in expected Topic list", listedTopics.contains(topicName + "-" + x), is(true));
             }
         }
 
@@ -415,6 +414,8 @@ public class AbstractUpgradeST extends AbstractST {
 
     protected void deployCoWithWaitForReadiness(final ExtensionContext extensionContext, final BundleVersionModificationData upgradeData,
                                                 final String namespaceName) throws IOException {
+        LOGGER.info("Deploying CO: {} in Namespace: {}", ResourceManager.getCoDeploymentName(), namespaceName);
+
         if (upgradeData.getFromVersion().equals("HEAD")) {
             coDir = new File(TestUtils.USER_PATH + "/../packaging/install/cluster-operator");
         } else {
@@ -426,7 +427,7 @@ public class AbstractUpgradeST extends AbstractST {
         // Modify + apply installation files
         copyModifyApply(coDir, namespaceName, extensionContext, upgradeData.getFeatureGatesBefore());
 
-        LOGGER.info("Waiting for {} deployment", ResourceManager.getCoDeploymentName());
+        LOGGER.info("Waiting for Deployment: {}", ResourceManager.getCoDeploymentName());
         DeploymentUtils.waitForDeploymentAndPodsReady(namespaceName, ResourceManager.getCoDeploymentName(), 1);
         LOGGER.info("{} is ready", ResourceManager.getCoDeploymentName());
     }
@@ -434,10 +435,12 @@ public class AbstractUpgradeST extends AbstractST {
 
     protected void deployKafkaClusterWithWaitForReadiness(final ExtensionContext extensionContext, final BundleVersionModificationData upgradeData,
                                                           final UpgradeKafkaVersion upgradeKafkaVersion) {
+        LOGGER.info("Deploying Kafka: {} in Namespace: {}", clusterName, kubeClient().getNamespace());
+
         if (!cmdKubeClient().getResources(getResourceApiVersion(Kafka.RESOURCE_PLURAL, upgradeData.getFromVersion())).contains(clusterName)) {
             // Deploy a Kafka cluster
             if (upgradeData.getFromExamples().equals("HEAD")) {
-                resourceManager.createResource(extensionContext, KafkaTemplates.kafkaPersistent(clusterName, 3, 3)
+                resourceManager.createResourceWithWait(extensionContext, KafkaTemplates.kafkaPersistent(clusterName, 3, 3)
                     .editSpec()
                         .editKafka()
                             .withVersion(upgradeKafkaVersion.getVersion())
@@ -448,7 +451,7 @@ public class AbstractUpgradeST extends AbstractST {
                     .build());
             } else {
                 kafkaYaml = new File(dir, upgradeData.getFromExamples() + "/examples/kafka/kafka-persistent.yaml");
-                LOGGER.info("Deploy Kafka from: {}", kafkaYaml.getPath());
+                LOGGER.info("Deploying Kafka from: {}", kafkaYaml.getPath());
                 // Change kafka version of it's empty (null is for remove the version)
                 if (upgradeKafkaVersion == null) {
                     cmdKubeClient().applyContent(KafkaUtils.changeOrRemoveKafkaVersion(kafkaYaml, null));
@@ -463,12 +466,14 @@ public class AbstractUpgradeST extends AbstractST {
 
     protected void deployKafkaUserWithWaitForReadiness(final ExtensionContext extensionContext, final BundleVersionModificationData upgradeData,
                                                        final String namespaceName) {
+        LOGGER.info("Deploying KafkaUser: {}/{}", kubeClient().getNamespace(), userName);
+
         if (!cmdKubeClient().getResources(getResourceApiVersion(KafkaUser.RESOURCE_PLURAL, upgradeData.getFromVersion())).contains(userName)) {
             if (upgradeData.getFromVersion().equals("HEAD")) {
-                resourceManager.createResource(extensionContext, KafkaUserTemplates.tlsUser(namespaceName, clusterName, userName).build());
+                resourceManager.createResourceWithWait(extensionContext, KafkaUserTemplates.tlsUser(namespaceName, clusterName, userName).build());
             } else {
                 kafkaUserYaml = new File(dir, upgradeData.getFromExamples() + "/examples/user/kafka-user.yaml");
-                LOGGER.info("Deploy KafkaUser from: {}", kafkaUserYaml.getPath());
+                LOGGER.info("Deploying KafkaUser from: {}", kafkaUserYaml.getPath());
                 cmdKubeClient().applyContent(KafkaUserUtils.removeKafkaUserPart(kafkaUserYaml, "authorization"));
                 ResourceManager.waitForResourceReadiness(getResourceApiVersion(KafkaUser.RESOURCE_PLURAL, upgradeData.getFromVersion()), userName);
             }
@@ -476,13 +481,15 @@ public class AbstractUpgradeST extends AbstractST {
     }
 
     protected void deployKafkaTopicWithWaitForReadiness(final BundleVersionModificationData upgradeData) {
+        LOGGER.info("Deploying KafkaTopic: {}/{}", kubeClient().getNamespace(), topicName);
+
         if (!cmdKubeClient().getResources(getResourceApiVersion(KafkaTopic.RESOURCE_PLURAL, upgradeData.getFromVersion())).contains(topicName)) {
             if (upgradeData.getFromVersion().equals("HEAD")) {
                 kafkaTopicYaml = new File(dir, PATH_TO_PACKAGING_EXAMPLES + "/topic/kafka-topic.yaml");
             } else {
                 kafkaTopicYaml = new File(dir, upgradeData.getFromExamples() + "/examples/topic/kafka-topic.yaml");
             }
-            LOGGER.info("Deploy KafkaTopic from: {}", kafkaTopicYaml.getPath());
+            LOGGER.info("Deploying KafkaTopic from: {}", kafkaTopicYaml.getPath());
             cmdKubeClient().create(kafkaTopicYaml);
             ResourceManager.waitForResourceReadiness(getResourceApiVersion(KafkaTopic.RESOURCE_PLURAL, upgradeData.getFromVersion()), topicName);
         }
@@ -490,11 +497,12 @@ public class AbstractUpgradeST extends AbstractST {
 
     protected void deployKafkaConnectAndKafkaConnectorWithWaitForReadiness(final ExtensionContext extensionContext,
                                                                             final BundleVersionModificationData acrossUpgradeData,
+                                                                            final UpgradeKafkaVersion upgradeKafkaVersion,
                                                                             final TestStorage testStorage) {
         // setup KafkaConnect + KafkaConnector
         if (!cmdKubeClient().getResources(getResourceApiVersion(KafkaConnect.RESOURCE_PLURAL, acrossUpgradeData.getFromVersion())).contains(clusterName)) {
             if (acrossUpgradeData.getFromVersion().equals("HEAD")) {
-                resourceManager.createResource(extensionContext, KafkaConnectTemplates.kafkaConnectWithFilePlugin(clusterName, testStorage.getNamespaceName(), 1)
+                resourceManager.createResourceWithWait(extensionContext, KafkaConnectTemplates.kafkaConnectWithFilePlugin(clusterName, testStorage.getNamespaceName(), 1)
                     .editMetadata()
                         .addToAnnotations(Annotations.STRIMZI_IO_USE_CONNECTOR_RESOURCES, "true")
                     .endMetadata()
@@ -503,16 +511,17 @@ public class AbstractUpgradeST extends AbstractST {
                         .addToConfig("value.converter.schemas.enable", false)
                         .addToConfig("key.converter", "org.apache.kafka.connect.storage.StringConverter")
                         .addToConfig("value.converter", "org.apache.kafka.connect.storage.StringConverter")
+                        .withVersion(upgradeKafkaVersion.getVersion())
                     .endSpec()
                     .build());
-                resourceManager.createResource(extensionContext, KafkaConnectorTemplates.kafkaConnector(clusterName)
+                resourceManager.createResourceWithWait(extensionContext, KafkaConnectorTemplates.kafkaConnector(clusterName)
                     .editMetadata()
                         .withNamespace(testStorage.getNamespaceName())
                     .endMetadata()
                     .editSpec()
                         .withClassName("org.apache.kafka.connect.file.FileStreamSinkConnector")
                         .addToConfig("topics", testStorage.getTopicName())
-                        .addToConfig("file", io.strimzi.systemtest.Constants.DEFAULT_SINK_FILE_PATH)
+                        .addToConfig("file", TestConstants.DEFAULT_SINK_FILE_PATH)
                     .endSpec()
                     .build());
             } else {
@@ -527,7 +536,7 @@ public class AbstractUpgradeST extends AbstractST {
                     )
                     .build();
 
-                final String imageName = Environment.getImageOutputRegistry() + "/" + testStorage.getNamespaceName() + "/connect-" + Util.hashStub(String.valueOf(new Random().nextInt(Integer.MAX_VALUE))) + ":latest";
+                final String imageFullPath = Environment.getImageOutputRegistry(testStorage.getNamespaceName(), TestConstants.ST_CONNECT_BUILD_IMAGE_NAME, String.valueOf(new Random().nextInt(Integer.MAX_VALUE)));
 
                 KafkaConnect kafkaConnect = new KafkaConnectBuilder(TestUtils.configFromYaml(kafkaConnectYaml, KafkaConnect.class))
                     .editMetadata()
@@ -537,24 +546,23 @@ public class AbstractUpgradeST extends AbstractST {
                     .editSpec()
                         .editOrNewBuild()
                             .withPlugins(fileSinkPlugin)
-                            .withNewDockerOutput()
-                                .withImage(imageName)
-                            .endDockerOutput()
+                            .withOutput(KafkaConnectTemplates.dockerOutput(imageFullPath))
                         .endBuild()
                         .addToConfig("key.converter.schemas.enable", false)
                         .addToConfig("value.converter.schemas.enable", false)
                         .addToConfig("key.converter", "org.apache.kafka.connect.storage.StringConverter")
                         .addToConfig("value.converter", "org.apache.kafka.connect.storage.StringConverter")
+                        .withVersion(upgradeKafkaVersion.getVersion())
                     .endSpec()
                     .build();
 
-                LOGGER.info("Deploy KafkaConnect from: {}", kafkaConnectYaml.getPath());
+                LOGGER.info("Deploying KafkaConnect from: {}", kafkaConnectYaml.getPath());
 
                 cmdKubeClient().applyContent(TestUtils.toYamlString(kafkaConnect));
                 ResourceManager.waitForResourceReadiness(getResourceApiVersion(KafkaConnect.RESOURCE_PLURAL, acrossUpgradeData.getFromVersion()), kafkaConnect.getMetadata().getName());
 
                 // in our examples is no sink connector and thus we are using the same as in HEAD verification
-                resourceManager.createResource(extensionContext, KafkaConnectorTemplates.kafkaConnector(clusterName)
+                resourceManager.createResourceWithWait(extensionContext, KafkaConnectorTemplates.kafkaConnector(clusterName)
                     .editMetadata()
                         .withNamespace(testStorage.getNamespaceName())
                         .addToLabels(Labels.STRIMZI_CLUSTER_LABEL, kafkaConnect.getMetadata().getName())
@@ -575,7 +583,7 @@ public class AbstractUpgradeST extends AbstractST {
                                                                               final UpgradeKafkaVersion upgradeKafkaVersion) throws IOException {
         this.deployCoWithWaitForReadiness(extensionContext, bundleDowngradeDataWithFeatureGates, testStorage.getNamespaceName());
         this.deployKafkaClusterWithWaitForReadiness(extensionContext, bundleDowngradeDataWithFeatureGates, upgradeKafkaVersion);
-        this.deployKafkaConnectAndKafkaConnectorWithWaitForReadiness(extensionContext, bundleDowngradeDataWithFeatureGates, testStorage);
+        this.deployKafkaConnectAndKafkaConnectorWithWaitForReadiness(extensionContext, bundleDowngradeDataWithFeatureGates, upgradeKafkaVersion, testStorage);
         this.deployKafkaUserWithWaitForReadiness(extensionContext, bundleDowngradeDataWithFeatureGates, testStorage.getNamespaceName());
 
         final KafkaClients clients = new KafkaClientsBuilder()
@@ -583,12 +591,12 @@ public class AbstractUpgradeST extends AbstractST {
                 .withConsumerName(testStorage.getConsumerName())
                 .withBootstrapAddress(KafkaResources.tlsBootstrapAddress(clusterName))
                 .withTopicName(testStorage.getTopicName())
-                .withUserName(userName)
+                .withUsername(userName)
                 .withMessageCount(500)
                 .withNamespaceName(testStorage.getNamespaceName())
                 .build();
 
-        resourceManager.createResource(extensionContext, clients.producerTlsStrimzi(clusterName));
+        resourceManager.createResourceWithWait(extensionContext, clients.producerTlsStrimzi(clusterName));
         // Verify that Producer finish successfully
         ClientUtils.waitForProducerClientSuccess(testStorage);
 
@@ -596,7 +604,7 @@ public class AbstractUpgradeST extends AbstractST {
         logPodImages(clusterName);
 
         // Verify FileSink KafkaConnector before upgrade
-        String connectorPodName = kubeClient().listPodsByPrefixInName(testStorage.getNamespaceName(), clusterName + "-connect").get(0).getMetadata().getName();
+        String connectorPodName = kubeClient().listPods(testStorage.getNamespaceName(), Collections.singletonMap(Labels.STRIMZI_KIND_LABEL, KafkaConnect.RESOURCE_KIND)).get(0).getMetadata().getName();
         KafkaConnectUtils.waitForMessagesInKafkaConnectFileSink(testStorage.getNamespaceName(), connectorPodName, DEFAULT_SINK_FILE_PATH, "\"Hello-world - 499\"");
 
         // Upgrade CO to HEAD and wait for readiness of ClusterOperator
@@ -609,16 +617,14 @@ public class AbstractUpgradeST extends AbstractST {
         KafkaConnectorUtils.waitForConnectorReady(testStorage.getNamespaceName(), clusterName);
 
         // send again new messages
-        resourceManager.createResource(extensionContext, clients.producerTlsStrimzi(clusterName));
+        resourceManager.createResourceWithWait(extensionContext, clients.producerTlsStrimzi(clusterName));
         // Verify that Producer finish successfully
         ClientUtils.waitForProducerClientSuccess(testStorage);
         // Verify FileSink KafkaConnector
-        connectorPodName = kubeClient().listPodsByPrefixInName(testStorage.getNamespaceName(), clusterName + "-connect").get(0).getMetadata().getName();
+        connectorPodName = kubeClient().listPods(testStorage.getNamespaceName(), Collections.singletonMap(Labels.STRIMZI_KIND_LABEL, KafkaConnect.RESOURCE_KIND)).get(0).getMetadata().getName();
         KafkaConnectUtils.waitForMessagesInKafkaConnectFileSink(testStorage.getNamespaceName(), connectorPodName, DEFAULT_SINK_FILE_PATH, "\"Hello-world - 499\"");
 
         // Verify that pods are stable
         PodUtils.verifyThatRunningPodsAreStable(testStorage.getNamespaceName(), clusterName);
-        // Check errors in CO log
-        assertNoCoErrorsLogged(testStorage.getNamespaceName(), 0);
     }
 }

@@ -33,13 +33,12 @@ public class StructuralCrdIT extends AbstractCrdIT {
             "kafkabridges.kafka.strimzi.io", "046-Crd-kafkabridge.yaml",
             "kafkaconnectors.kafka.strimzi.io", "047-Crd-kafkaconnector.yaml",
             "kafkamirrormaker2s.kafka.strimzi.io", "048-Crd-kafkamirrormaker2.yaml",
-            "kafkarebalances.kafka.strimzi.io", "049-Crd-kafkarebalance.yaml"
+            "kafkarebalances.kafka.strimzi.io", "049-Crd-kafkarebalance.yaml",
+            "kafkanodepools.kafka.strimzi.io", "04A-Crd-kafkanodepool.yaml"
     );
     
     @Test
     public void v1Beta2IsStructuralWithCrdV1() {
-        assumeKube1_16Plus();
-
         for (Map.Entry<String, String> crd : crdFiles.entrySet()) {
             assertApiVersionsAreStructural(crd.getKey(),
                     TestUtils.USER_PATH + "/../packaging/install/cluster-operator/" + crd.getValue(),

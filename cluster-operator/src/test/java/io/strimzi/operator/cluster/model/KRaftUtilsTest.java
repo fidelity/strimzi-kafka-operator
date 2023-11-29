@@ -6,13 +6,12 @@ package io.strimzi.operator.cluster.model;
 
 import io.strimzi.api.kafka.model.EntityOperatorSpec;
 import io.strimzi.api.kafka.model.EntityOperatorSpecBuilder;
-import io.strimzi.api.kafka.model.KafkaClusterSpec;
-import io.strimzi.api.kafka.model.KafkaClusterSpecBuilder;
 import io.strimzi.api.kafka.model.KafkaSpec;
 import io.strimzi.api.kafka.model.KafkaSpecBuilder;
 import io.strimzi.api.kafka.model.listener.arraylistener.GenericKafkaListenerBuilder;
 import io.strimzi.api.kafka.model.listener.arraylistener.KafkaListenerType;
 import io.strimzi.api.kafka.model.storage.PersistentClaimStorageBuilder;
+import io.strimzi.operator.common.model.InvalidResourceException;
 import io.strimzi.test.annotations.ParallelSuite;
 import io.strimzi.test.annotations.ParallelTest;
 
@@ -21,6 +20,7 @@ import java.util.HashSet;
 import java.util.Set;
 
 import static org.hamcrest.MatcherAssert.assertThat;
+import static org.hamcrest.Matchers.containsString;
 import static org.hamcrest.Matchers.is;
 import static org.junit.jupiter.api.Assertions.assertDoesNotThrow;
 import static org.junit.jupiter.api.Assertions.assertThrows;
@@ -47,7 +47,7 @@ public class KRaftUtilsTest {
                 .endKafka()
                 .build();
 
-        assertDoesNotThrow(() -> KRaftUtils.validateKafkaCrForKRaft(spec));
+        assertDoesNotThrow(() -> KRaftUtils.validateKafkaCrForKRaft(spec, false));
     }
 
     @ParallelTest
@@ -69,17 +69,21 @@ public class KRaftUtilsTest {
                     .withNewKafkaAuthorizationSimple()
                     .endKafkaAuthorizationSimple()
                 .endKafka()
+                .withNewEntityOperator()
+                    .withNewTopicOperator()
+                    .endTopicOperator()
+                .endEntityOperator()
                 .build();
 
-        InvalidResourceException ex = assertThrows(InvalidResourceException.class, () -> KRaftUtils.validateKafkaCrForKRaft(spec));
+        InvalidResourceException ex = assertThrows(InvalidResourceException.class, () -> KRaftUtils.validateKafkaCrForKRaft(spec, false));
 
-        assertThat(ex.getMessage(), is("Kafka configuration is not valid: [Authentication of type 'scram-sha-512` is currently not supported when the UseKRaft feature gate is enabled, Using more than one disk in a JBOD storage is currently not supported when the UseKRaft feature gate is enabled]"));
+        assertThat(ex.getMessage(), is("Kafka configuration is not valid: [Only Unidirectional Topic Operator is supported when the UseKRaft feature gate is enabled.]"));
     }
 
     @ParallelTest
     public void testNoEntityOperator() {
         Set<String> errors = new HashSet<>(0);
-        KRaftUtils.validateEntityOperatorSpec(errors, null);
+        KRaftUtils.validateEntityOperatorSpec(errors, null, false);
 
         assertThat(errors, is(Collections.emptySet()));
     }
@@ -92,7 +96,7 @@ public class KRaftUtilsTest {
                 .endUserOperator()
                 .build();
 
-        KRaftUtils.validateEntityOperatorSpec(errors, eo);
+        KRaftUtils.validateEntityOperatorSpec(errors, eo, false);
         assertThat(errors, is(Collections.emptySet()));
     }
 
@@ -106,9 +110,24 @@ public class KRaftUtilsTest {
                 .endTopicOperator()
                 .build();
 
-        KRaftUtils.validateEntityOperatorSpec(errors, eo);
+        KRaftUtils.validateEntityOperatorSpec(errors, eo, false);
 
-        assertThat(errors, is(Set.of("Topic Operator is currently not supported when the UseKRaft feature gate is enabled")));
+        assertThat(errors, is(Set.of("Only Unidirectional Topic Operator is supported when the UseKRaft feature gate is enabled.")));
+    }
+
+    @ParallelTest
+    public void testEnabledUnidirectionalTopicOperator() {
+        Set<String> errors = new HashSet<>(0);
+        EntityOperatorSpec eo = new EntityOperatorSpecBuilder()
+                .withNewUserOperator()
+                .endUserOperator()
+                .withNewTopicOperator()
+                .endTopicOperator()
+                .build();
+
+        KRaftUtils.validateEntityOperatorSpec(errors, eo, true);
+
+        assertThat(errors.size(), is(0));
     }
 
     @ParallelTest
@@ -119,56 +138,22 @@ public class KRaftUtilsTest {
                 .endTopicOperator()
                 .build();
 
-        KRaftUtils.validateEntityOperatorSpec(errors, eo);
+        KRaftUtils.validateEntityOperatorSpec(errors, eo, false);
 
-        assertThat(errors, is(Set.of("Topic Operator is currently not supported when the UseKRaft feature gate is enabled")));
+        assertThat(errors, is(Set.of("Only Unidirectional Topic Operator is supported when the UseKRaft feature gate is enabled.")));
     }
 
     @ParallelTest
-    public void testJbodStorageWithMultipleDisks() {
-        Set<String> errors = new HashSet<>(0);
-        KafkaClusterSpec kcs = new KafkaClusterSpecBuilder()
-                .withNewJbodStorage()
-                .withVolumes(new PersistentClaimStorageBuilder().withId(0).withSize("100Gi").build(),
-                        new PersistentClaimStorageBuilder().withId(1).withSize("100Gi").build())
-                .endJbodStorage()
-                .build();
+    public void testKRaftMetadataVersionValidation()    {
+        // Valid values
+        assertDoesNotThrow(() -> KRaftUtils.validateMetadataVersion("3.6"));
+        assertDoesNotThrow(() -> KRaftUtils.validateMetadataVersion("3.6-IV2"));
 
-        KRaftUtils.validateKafkaSpec(errors, kcs);
+        // Invalid Values
+        InvalidResourceException e = assertThrows(InvalidResourceException.class, () -> KRaftUtils.validateMetadataVersion("3.6-IV9"));
+        assertThat(e.getMessage(), containsString("Metadata version 3.6-IV9 is invalid"));
 
-        assertThat(errors, is(Set.of("Using more than one disk in a JBOD storage is currently not supported when the UseKRaft feature gate is enabled")));
-    }
-
-    @ParallelTest
-    public void testJbodStorageWithOneDisk() {
-        Set<String> errors = new HashSet<>(0);
-        KafkaClusterSpec kcs = new KafkaClusterSpecBuilder()
-                .withNewJbodStorage()
-                .withVolumes(new PersistentClaimStorageBuilder().withId(0).withSize("100Gi").build())
-                .endJbodStorage()
-                .build();
-
-        KRaftUtils.validateKafkaSpec(errors, kcs);
-
-        assertThat(errors, is(Set.of()));
-    }
-
-    @ParallelTest
-    public void testKafkaScramSha512Listener() {
-        Set<String> errors = new HashSet<>(0);
-        KafkaClusterSpec kcs = new KafkaClusterSpecBuilder()
-                .withListeners(new GenericKafkaListenerBuilder()
-                        .withName("listener")
-                        .withPort(9092)
-                        .withTls(true)
-                        .withType(KafkaListenerType.INTERNAL)
-                        .withNewKafkaListenerAuthenticationScramSha512Auth()
-                        .endKafkaListenerAuthenticationScramSha512Auth()
-                        .build())
-                .build();
-
-        KRaftUtils.validateKafkaSpec(errors, kcs);
-
-        assertThat(errors, is(Set.of("Authentication of type 'scram-sha-512` is currently not supported when the UseKRaft feature gate is enabled")));
+        e = assertThrows(InvalidResourceException.class, () -> KRaftUtils.validateMetadataVersion("3"));
+        assertThat(e.getMessage(), containsString("Metadata version 3 is invalid"));
     }
 }

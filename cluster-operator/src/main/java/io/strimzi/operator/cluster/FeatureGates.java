@@ -17,11 +17,13 @@ public class FeatureGates {
     /* test */ static final FeatureGates NONE = new FeatureGates("");
 
     private static final String USE_KRAFT = "UseKRaft";
-    private static final String STABLE_CONNECT_IDENTITIES = "StableConnectIdentities";
+    private static final String KAFKA_NODE_POOLS = "KafkaNodePools";
+    private static final String UNIDIRECTIONAL_TOPIC_OPERATOR = "UnidirectionalTopicOperator";
 
     // When adding new feature gates, do not forget to add them to allFeatureGates() and toString() methods
     private final FeatureGate useKRaft = new FeatureGate(USE_KRAFT, false);
-    private final FeatureGate stableConnectIdentities = new FeatureGate(STABLE_CONNECT_IDENTITIES, false);
+    private final FeatureGate kafkaNodePools = new FeatureGate(KAFKA_NODE_POOLS, true);
+    private final FeatureGate unidirectionalTopicOperator = new FeatureGate(UNIDIRECTIONAL_TOPIC_OPERATOR, true);
 
     /**
      * Constructs the feature gates configuration.
@@ -46,8 +48,11 @@ public class FeatureGates {
                     case USE_KRAFT:
                         setValueOnlyOnce(useKRaft, value);
                         break;
-                    case STABLE_CONNECT_IDENTITIES:
-                        setValueOnlyOnce(stableConnectIdentities, value);
+                    case KAFKA_NODE_POOLS:
+                        setValueOnlyOnce(kafkaNodePools, value);
+                        break;
+                    case UNIDIRECTIONAL_TOPIC_OPERATOR:
+                        setValueOnlyOnce(unidirectionalTopicOperator, value);
                         break;
                     default:
                         throw new InvalidConfigurationException("Unknown feature gate " + featureGate + " found in the configuration");
@@ -59,12 +64,14 @@ public class FeatureGates {
     }
 
     /**
-     * Validates any dependencies between various feature gates. For example, in the past, the UseKRaft feature gate
-     * could be enabled only when UseStrimziPodSets was enabled as well. When the dependencies are not satisfied,
+     * Validates any dependencies between various feature gates. For example, the UseKRaft feature gate can be enabled
+     * only when KafkaNodePools feature gate is enabled as well. When the dependencies are not satisfied,
      * InvalidConfigurationException is thrown.
      */
     private void validateInterDependencies()    {
-        // Currently, there are no interdependencies between different feature gates
+        if (useKRaftEnabled() && !kafkaNodePoolsEnabled())  {
+            throw new InvalidConfigurationException("The UseKRaft feature gate can be enabled only together with the KafkaNodePools feature gate.");
+        }
     }
 
     /**
@@ -90,10 +97,17 @@ public class FeatureGates {
     }
 
     /**
-     * @return  Returns true when the StableConnectIdentities feature gate is enabled
+     * @return  Returns true when the KafkaNodePools feature gate is enabled
      */
-    public boolean stableConnectIdentitiesEnabled() {
-        return stableConnectIdentities.isEnabled();
+    public boolean kafkaNodePoolsEnabled() {
+        return kafkaNodePools.isEnabled();
+    }
+
+    /**
+     * @return  Returns true when the UnidirectionalTopicOperator feature gate is enabled
+     */
+    public boolean unidirectionalTopicOperatorEnabled() {
+        return unidirectionalTopicOperator.isEnabled();
     }
 
     /**
@@ -104,7 +118,8 @@ public class FeatureGates {
     /*test*/ List<FeatureGate> allFeatureGates()  {
         return List.of(
                 useKRaft,
-                stableConnectIdentities
+                kafkaNodePools,
+                unidirectionalTopicOperator
         );
     }
 
@@ -112,7 +127,8 @@ public class FeatureGates {
     public String toString() {
         return "FeatureGates(" +
                 "UseKRaft=" + useKRaft.isEnabled() + "," +
-                "StableConnectIdentities=" + stableConnectIdentities.isEnabled() +
+                "KafkaNodePools=" + kafkaNodePools.isEnabled() + "," +
+                "UnidirectionalTopicOperator=" + unidirectionalTopicOperator.isEnabled() +
                 ")";
     }
 

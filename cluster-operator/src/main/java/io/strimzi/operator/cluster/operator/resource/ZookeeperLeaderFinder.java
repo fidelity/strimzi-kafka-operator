@@ -7,7 +7,7 @@ package io.strimzi.operator.cluster.operator.resource;
 import io.fabric8.kubernetes.api.model.Secret;
 import io.strimzi.api.kafka.model.KafkaResources;
 import io.strimzi.certs.CertAndKey;
-import io.strimzi.operator.cluster.model.Ca;
+import io.strimzi.operator.common.model.Ca;
 import io.strimzi.operator.cluster.model.DnsNameGenerator;
 import io.strimzi.operator.cluster.model.ZookeeperCluster;
 import io.strimzi.operator.common.BackOff;
@@ -295,7 +295,7 @@ public class ZookeeperLeaderFinder {
      * The hostname for connecting to zookeeper in the given pod.
      *
      * @param reconciliation    Reconciliation used to obtain the namespace and cluster name
-     * @param podName           Name of the pod for which the hosname should be constructed
+     * @param podName           Name of the pod for which the hostname should be constructed
      *
      * @return                  Hostname of the ZooKeeper node
      */

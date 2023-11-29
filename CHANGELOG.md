@@ -1,11 +1,156 @@
 # CHANGELOG
 
+## 0.39.0
+
+* The `StableConnectIdentities` feature gate moves to GA stage and is now permanently enabled without the possibility to disable it.
+  All Connect and Mirror Maker 2 operands will now use StrimziPodSets.
+* The `KafkaNodePools` feature gate moves to beta stage and is enabled by default.
+  If needed, `KafkaNodePools` can be disabled in the feature gates configuration in the Cluster Operator.
+* The `UnidirectionalTopicOperator` feature gate moves to beta stage and is enabled by default.
+  If needed, `UnidirectionalTopicOperator` can be disabled in the feature gates configuration in the Cluster Operator.
+* Improved Kafka Connect metrics and dashboard example files
+* Allow specifying and managing KRaft metadata version
+* Add support for KRaft to KRaft upgrades (Apache Kafka upgrades for the KRaft based clusters)
+
+### Changes, deprecations and removals
+
+* The `StableConnectIdentities` feature gate moves to GA stage and cannot be disabled anymore.
+  When using Connect or Mirror Maker 2 operands, direct downgrade to Strimzi versions older than 0.34 is not supported anymore.
+  You have to first downgrade to Strimzi version between 0.34 to 0.38, disable the `StableConnectIdentities` feature gate, and only then downgrade to an older Strimzi version.
+* Strimzi 0.39.0 (and any of its patch releases) is the last Strimzi version with support for Kubernetes 1.21 and 1.22.
+  From Strimzi 0.40.0 on, we will support only Kubernetes 1.23 and newer.
+
+## 0.38.0
+
+* Add support for Apache Kafka 3.6.0 and drop support for 3.4.0 and 3.4.1
+* Sign containers using `cosign`
+* Generate and publish Software Bill of Materials (SBOMs) of Strimzi containers
+* Add support for stopping connectors according to [Strimzi Proposal #54](https://github.com/strimzi/proposals/blob/main/054-stopping-kafka-connect-connectors.md)
+* Allow manual rolling of Kafka Connect and Kafka Mirror Maker 2 pods using the `strimzi.io/manual-rolling-update` annotation (supported only when `StableConnectIdentities` feature gate is enabled) 
+* Make sure brokers are empty before scaling them down
+* Update Cruise Control to 2.5.128
+* Add support for pausing reconciliations to the Unidirectional Topic Operator
+* Allow running ZooKeeper and KRaft based Apache Kafka clusters in parallel when the `+UseKRaft` feature gate is enabled
+* Add support for metrics to the Unidirectional Topic Operator
+* Added the `includeAcceptHeader` option to OAuth client and listener authentication configuration and to `keycloak` authorization. If set to `false` it turns off sending of `Accept` header when communicating with OAuth / OIDC authorization server. This feature is enabled by the updated Strimzi Kafka OAuth library (0.14.0).
+* Update HTTP bridge to latest 0.27.0 release
+
+### Changes, deprecations and removals
+
+* The `Kafka.KafkaStatus.ListenerStatus.type` property has been deprecated for a long time, and now we do not use it anymore.
+  The current plan is to completely remove this property in the next schema version.
+  If needed, you can use the `Kafka.KafkaStatus.ListenerStatus.name` property, which has the same value.
+* Added `strimzi.io/kraft` annotation to be applied on `Kafka` custom resource, together with the `+UseKRaft` feature gate enabled, to declare a ZooKeeper or KRaft based cluster.
+  * if `enabled` the `Kafka` resource defines a KRaft-based cluster.
+  * if `disabled`, missing or any other value, the operator handle the `Kafka` resource as a ZooKeeper-based cluster.
+* The `io.strimzi.kafka.EnvVarConfigProvider` configuration provider is now deprecated and will be removed in Strimzi 0.42. Users should migrate to Kafka's implementation, `org.apache.kafka.common.config.provider.EnvVarConfigProvider`, which is a drop-in replacement.
+  For example:
+  ```yaml
+  config:
+    # ...
+    config.providers: env
+    config.providers.env.class: io.strimzi.kafka.EnvVarConfigProvider
+    # ...
+  ```
+  becomes
+  ```yaml
+  config:
+    # ...
+    config.providers: env
+    config.providers.env.class: org.apache.kafka.common.config.provider.EnvVarConfigProvider
+    # ...
+  ```
+
+## 0.37.0
+
+* The `StableConnectIdentites` feature gate moves to beta stage.
+  By default, StrimziPodSets are used for Kafka Connect and Kafka Mirror Maker 2.
+  If needed, `StableConnectIdentites` can be disabled in the feature gates configuration in the Cluster Operator.
+* Support for the `ppc64le` platform
+* Added version fields to the `Kafka` custom resource status to track install and upgrade state
+* Support for infinite auto-restarts of Kafka Connect and Kafka Mirror Maker 2 connectors
+
+### Changes, deprecations and removals
+
+* **Removed support for OpenTracing**:
+  * The `tracing.type: jaeger` configuration, in `KafkaConnect`, `KafkaMirrorMaker`, `KafkaMirrorMaker2` and `KafkaBridge` resources, is not supported anymore.
+  * The OpenTelemetry based tracing is the only available by using `tracing.type: opentelemetry`.
+* **The default behavior of the Kafka Connect connector auto-restart has changed.**
+  When the auto-restart feature is enabled in `KafkaConnector` or `KafkaMirrorMaker2` custom resources, it will now continue to restart the connectors indefinitely rather than stopping after 7 restarts, as previously.
+  If you want to use the original behaviour, use the `.spec.autoRestart.maxRestarts` option to configure the maximum number of restarts.
+  For example:
+  ```yaml
+  apiVersion: kafka.strimzi.io/v1beta2
+  kind: KafkaConnector
+  metadata:
+    labels:
+      strimzi.io/cluster: my-connect
+    name: echo-sink-connector
+  spec:
+    # ...
+    autoRestart:
+      enabled: true
+      maxRestarts: 7
+    # ...
+  ```
+* **The automatic configuration of Cruise Control CPU capacity has been changed in this release**:
+  * There are three ways to configure Cruise Control CPU capacity values:
+    * `.spec.cruiseControl.brokerCapacity` (for all brokers)
+    * `.spec.cruiseControl.brokerCapacity.overrides` (per broker)
+    * Kafka resource requests and limits (for all brokers).
+  * The precedence of which Cruise Control CPU capacity configuration is used has been changed.
+  * In previous Strimzi versions, the Kafka resource limit (if set) took precedence, regardless if any other CPU configurations were set.
+    * For example:
+      * (1) Kafka resource limits
+      * (2) `.spec.cruiseControl.brokerCapacity.overrides`
+      * (3) `.spec.cruiseControl.brokerCapacity`
+  * This previous behavior was identified as a bug and was fixed in this Strimzi release.
+  * Going forward, the brokerCapacity overrides per broker take top precedence, then general brokerCapacity configuration, and then the Kafka resource requests, then the Kafka resource limits.
+    * For example:
+      * (1) `.spec.cruiseControl.brokerCapacity.overrides`
+      * (2) `.spec.cruiseControl.brokerCapacity`
+      * (3) Kafka resource requests
+      * (4) Kafka resource limits
+    * When none of Cruise Control CPU capacity configurations mentioned above are configured, CPU capacity will be set to `1`.
+ as any _override_ value configured in the `.spec.cruiseControl` section of the `Kafka` custom resource.
+
+## 0.36.1
+
+* Add support for Apache Kafka 3.5.1
+
+## 0.36.0
+
+* Add support for Apache Kafka 3.4.1 and 3.5.0, and remove support for 3.3.1 and 3.3.2
+* Enable SCRAM-SHA authentication in KRaft mode (supported in Apache Kafka 3.5.0 and newer)
+* Add support for insecure flag in Maven artifacts in Kafka Connect Build
+* Update Kafka Exporter to [1.7.0](https://github.com/danielqsj/kafka_exporter/releases/tag/v1.7.0)
+* Improve Kafka rolling update to avoid rolling broker in log recovery
+* Added support for Kafka Exporter topic exclude and consumer group exclude parameters
+* Update Kaniko container builder to 1.12.1
+* Add support for _Kafka node pools_ according to [Strimzi Proposal #50](https://github.com/strimzi/proposals/blob/main/050-Kafka-Node-Pools.md)
+* Add support for _Unidirectional Topic Operator_ according to [Strimzi Proposal #51](https://github.com/strimzi/proposals/blob/main/051-unidirectional-topic-operator.md)
+* Update OpenTelemetry 1.19.0
+* Fixed ordering of JVM performance options [#8579](https://github.com/strimzi/strimzi-kafka-operator/issues/8579)
+* Log a warning when a KafkaTopic has no spec [#8465](https://github.com/strimzi/strimzi-kafka-operator/issues/8465)
+* Updated Strimzi OAuth library to 0.13.0 with better support for KRaft
+
+### Changes, deprecations and removals
+
+* **From Strimzi 0.36.0 on, we support only Kubernetes 1.21 and newer.**
+  Kubernetes 1.19 and 1.20 are not supported anymore.
+* Enabling the `UseKRaft` feature gate is now possible only together with the `KafkaNodePools` feature gate.
+  To deploy a Kafka cluster in the KRaft mode, you have to use the `KafkaNodePool` resources.
+* The Helm Chart repository at `https://strimzi.io/charts/` is now deprecated.
+  Please use the Helm Chart OCI artifacts from our [Helm Chart OCI repository instead](https://quay.io/organization/strimzi-helm).
+* Option `customClaimCheck` of 'oauth' authentication which relies on JsonPath changed the handling of equal comparison against `null` as the behaviour was buggy and is now fixed in the updated version of JsonPath library [OAuth #196](https://github.com/strimzi/strimzi-kafka-oauth/pull/196)
+
 ## 0.35.0
 
-* Redesigned the `UserOperatorConfig` to make it more efficient and flexible
+* Redesigned the Cluster and User Operator configuration to make it more efficient and flexible
 * Allow multiple imagePullSecrets in the Strimzi Helm chart
 * Remove support for JMX Trans
 * Move feature gate `UseStrimziPodSets` to GA and remove support for StatefulSets
+* Add flag to load Grafana dashboards from Helm Chart
 
 ### Changes, deprecations and removals
 

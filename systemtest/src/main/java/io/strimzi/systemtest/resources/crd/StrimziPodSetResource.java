@@ -29,12 +29,17 @@ public class StrimziPodSetResource implements ResourceType<StrimziPodSet> {
 
     @Override
     public void create(StrimziPodSet resource) {
-        strimziPodSetClient().inNamespace(resource.getMetadata().getNamespace()).resource(resource).createOrReplace();
+        strimziPodSetClient().inNamespace(resource.getMetadata().getNamespace()).resource(resource).create();
     }
 
     @Override
     public void delete(StrimziPodSet resource) {
         strimziPodSetClient().inNamespace(resource.getMetadata().getNamespace()).resource(resource).delete();
+    }
+
+    @Override
+    public void update(StrimziPodSet resource) {
+        strimziPodSetClient().inNamespace(resource.getMetadata().getNamespace()).resource(resource).update();
     }
 
     @Override

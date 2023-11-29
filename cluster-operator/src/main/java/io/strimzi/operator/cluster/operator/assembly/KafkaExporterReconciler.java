@@ -9,7 +9,7 @@ import io.fabric8.kubernetes.api.model.apps.Deployment;
 import io.strimzi.api.kafka.model.Kafka;
 import io.strimzi.api.kafka.model.KafkaExporterResources;
 import io.strimzi.operator.cluster.ClusterOperatorConfig;
-import io.strimzi.operator.cluster.model.Ca;
+import io.strimzi.operator.common.model.Ca;
 import io.strimzi.operator.cluster.model.ClusterCa;
 import io.strimzi.operator.cluster.model.ImagePullPolicy;
 import io.strimzi.operator.cluster.model.KafkaExporter;
@@ -24,6 +24,7 @@ import io.strimzi.operator.common.operator.resource.DeploymentOperator;
 import io.strimzi.operator.common.operator.resource.ReconcileResult;
 import io.strimzi.operator.common.operator.resource.SecretOperator;
 import io.strimzi.operator.common.operator.resource.ServiceAccountOperator;
+import io.strimzi.operator.common.operator.resource.NetworkPolicyOperator;
 import io.vertx.core.Future;
 
 import java.time.Clock;
@@ -41,10 +42,11 @@ public class KafkaExporterReconciler {
     private final KafkaExporter kafkaExporter;
     private final ClusterCa clusterCa;
     private final List<String> maintenanceWindows;
-
+    private final boolean isNetworkPolicyGeneration;
     private final DeploymentOperator deploymentOperator;
     private final SecretOperator secretOperator;
     private final ServiceAccountOperator serviceAccountOperator;
+    private final NetworkPolicyOperator networkPolicyOperator;
 
     private boolean existingKafkaExporterCertsChanged = false;
 
@@ -68,13 +70,15 @@ public class KafkaExporterReconciler {
     ) {
         this.reconciliation = reconciliation;
         this.operationTimeoutMs = config.getOperationTimeoutMs();
-        this.kafkaExporter = KafkaExporter.fromCrd(reconciliation, kafkaAssembly, versions);
+        this.kafkaExporter = KafkaExporter.fromCrd(reconciliation, kafkaAssembly, versions, supplier.sharedEnvironmentProvider);
         this.clusterCa = clusterCa;
         this.maintenanceWindows = kafkaAssembly.getSpec().getMaintenanceTimeWindows();
+        this.isNetworkPolicyGeneration = config.isNetworkPolicyGeneration();
 
         this.deploymentOperator = supplier.deploymentOperations;
         this.secretOperator = supplier.secretOperations;
         this.serviceAccountOperator = supplier.serviceAccountOperations;
+        this.networkPolicyOperator = supplier.networkPolicyOperator;
     }
 
     /**
@@ -92,6 +96,7 @@ public class KafkaExporterReconciler {
     public Future<Void> reconcile(boolean isOpenShift, ImagePullPolicy imagePullPolicy, List<LocalObjectReference> imagePullSecrets, Clock clock)    {
         return serviceAccount()
                 .compose(i -> certificatesSecret(clock))
+                .compose(i -> networkPolicy())
                 .compose(i -> deployment(isOpenShift, imagePullPolicy, imagePullSecrets))
                 .compose(i -> waitForDeploymentReadiness());
     }
@@ -145,6 +150,25 @@ public class KafkaExporterReconciler {
     }
 
     /**
+     * Manages the Kafka Exporter Network Policies.
+     *
+     * @return  Future which completes when the reconciliation is done
+     */
+    protected Future<Void> networkPolicy() {
+        if (isNetworkPolicyGeneration) {
+            return networkPolicyOperator
+                    .reconcile(
+                            reconciliation,
+                            reconciliation.namespace(),
+                            KafkaExporterResources.deploymentName(reconciliation.name()),
+                            kafkaExporter != null ? kafkaExporter.generateNetworkPolicy() : null
+                    ).map((Void) null);
+        } else {
+            return Future.succeededFuture();
+        }
+    }
+
+    /**
      * Manages the Kafka Exporter deployment.
      *
      * @param isOpenShift       Flag indicating whether we are on OpenShift or not
@@ -159,6 +183,9 @@ public class KafkaExporterReconciler {
             int caCertGeneration = ModelUtils.caCertGeneration(this.clusterCa);
             Annotations.annotations(deployment.getSpec().getTemplate()).put(
                     Ca.ANNO_STRIMZI_IO_CLUSTER_CA_CERT_GENERATION, String.valueOf(caCertGeneration));
+            int caKeyGeneration = ModelUtils.caKeyGeneration(clusterCa);
+            Annotations.annotations(deployment.getSpec().getTemplate()).put(
+                    Ca.ANNO_STRIMZI_IO_CLUSTER_CA_KEY_GENERATION, String.valueOf(caKeyGeneration));
 
             return deploymentOperator
                     .reconcile(reconciliation, reconciliation.namespace(), KafkaExporterResources.deploymentName(reconciliation.name()), deployment)

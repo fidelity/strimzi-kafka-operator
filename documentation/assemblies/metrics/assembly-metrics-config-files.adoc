@@ -8,7 +8,7 @@
 = Example metrics files
 
 [role="_abstract"]
-You can find example Grafana dashboards and other metrics configuration files in the xref:deploy-examples-{context}[example configuration files] provided by Strimzi.
+You can find example Grafana dashboards and other metrics configuration files in the xref:config-examples-{context}[example configuration files] provided by Strimzi.
 
 .Example metrics files provided with Strimzi
 [source]
@@ -33,7 +33,7 @@ metrics
 │    ├── alert-manager.yaml <5>
 │    ├── prometheus-rules.yaml <6>
 │    ├── prometheus.yaml <7>
-│    ├── strimzi-pod-monitor.yaml <8>
+│    └── strimzi-pod-monitor.yaml <8>
 ├── kafka-bridge-metrics.yaml <9>
 ├── kafka-connect-metrics.yaml <10>
 ├── kafka-cruise-control-metrics.yaml <11>
@@ -52,7 +52,7 @@ metrics
 <10> Metrics configuration that defines Prometheus JMX Exporter relabeling rules for Kafka Connect.
 <11> Metrics configuration that defines Prometheus JMX Exporter relabeling rules for Cruise Control.
 <12> Metrics configuration that defines Prometheus JMX Exporter relabeling rules for Kafka and ZooKeeper.
-<13> Metrics configuration that defines Prometheus JMX Exporter relabeling rules for Kafka Mirror Maker 2.0.
+<13> Metrics configuration that defines Prometheus JMX Exporter relabeling rules for Kafka MirrorMaker 2.
 
 //Example Prometheus metrics files
 include::../../modules/metrics/ref-prometheus-metrics-config.adoc[leveloffset=+1]

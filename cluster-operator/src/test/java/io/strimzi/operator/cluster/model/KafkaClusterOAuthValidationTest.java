@@ -15,18 +15,26 @@ import io.strimzi.api.kafka.model.listener.arraylistener.GenericKafkaListenerBui
 import io.strimzi.api.kafka.model.listener.arraylistener.KafkaListenerType;
 import io.strimzi.api.kafka.model.storage.EphemeralStorage;
 import io.strimzi.operator.cluster.KafkaVersionTestUtils;
+import io.strimzi.operator.cluster.model.nodepools.NodePoolUtils;
 import io.strimzi.operator.common.Reconciliation;
+import io.strimzi.operator.common.model.InvalidResourceException;
 import io.strimzi.test.annotations.ParallelSuite;
 import io.strimzi.test.annotations.ParallelTest;
 
 import java.util.List;
+import java.util.Map;
+import java.util.Set;
 
-import static java.util.Arrays.asList;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 
 @ParallelSuite
 public class KafkaClusterOAuthValidationTest {
     private static final KafkaVersion.Lookup VERSIONS = KafkaVersionTestUtils.getKafkaVersionLookup();
+    private static final SharedEnvironmentProvider SHARED_ENV_PROVIDER = new MockSharedEnvironmentProvider();
+    private final static Set<NodeRef> THREE_NODES = Set.of(
+            new NodeRef("name-kafka-0", 0, "kafka", false, true),
+            new NodeRef("name-kafka-1", 1, "kafka", false, true),
+            new NodeRef("name-kafka-2", 2, "kafka", false, true));
 
     private List<GenericKafkaListener> getListeners(KafkaListenerAuthenticationOAuth auth)   {
         GenericKafkaListener listener1 = new GenericKafkaListenerBuilder()
@@ -36,7 +44,7 @@ public class KafkaClusterOAuthValidationTest {
                 .withAuth(auth)
                 .build();
 
-        return asList(listener1);
+        return List.of(listener1);
     }
 
     @ParallelTest
@@ -51,12 +59,12 @@ public class KafkaClusterOAuthValidationTest {
                 .endClientSecret()
                 .build();
 
-        ListenersValidator.validate(Reconciliation.DUMMY_RECONCILIATION, 3, getListeners(auth));
+        ListenersValidator.validate(Reconciliation.DUMMY_RECONCILIATION, THREE_NODES, getListeners(auth));
     }
 
     @ParallelTest
     public void testOAuthAuthnAuthz() {
-        List<GenericKafkaListener> listeners = asList(new GenericKafkaListenerBuilder()
+        List<GenericKafkaListener> listeners = List.of(new GenericKafkaListenerBuilder()
                 .withName("listener1")
                 .withPort(9900)
                 .withType(KafkaListenerType.INTERNAL)
@@ -105,13 +113,14 @@ public class KafkaClusterOAuthValidationTest {
                 .endSpec()
                 .build();
 
-        KafkaCluster.fromCrd(Reconciliation.DUMMY_RECONCILIATION, kafkaAssembly, VERSIONS);
+        List<KafkaPool> pools = NodePoolUtils.createKafkaPools(Reconciliation.DUMMY_RECONCILIATION, kafkaAssembly, null, Map.of(), Map.of(), false, SHARED_ENV_PROVIDER);
+        KafkaCluster.fromCrd(Reconciliation.DUMMY_RECONCILIATION, kafkaAssembly, pools, VERSIONS, false, null, SHARED_ENV_PROVIDER);
     }
 
     @ParallelTest
     public void testOAuthAuthzWithoutAuthn() {
         assertThrows(InvalidResourceException.class, () -> {
-            List<GenericKafkaListener> listeners = asList(new GenericKafkaListenerBuilder()
+            List<GenericKafkaListener> listeners = List.of(new GenericKafkaListenerBuilder()
                     .withName("listener1")
                     .withPort(9900)
                     .withType(KafkaListenerType.INTERNAL)
@@ -146,7 +155,8 @@ public class KafkaClusterOAuthValidationTest {
                     .endSpec()
                     .build();
 
-            KafkaCluster.fromCrd(Reconciliation.DUMMY_RECONCILIATION, kafkaAssembly, VERSIONS);
+            List<KafkaPool> pools = NodePoolUtils.createKafkaPools(Reconciliation.DUMMY_RECONCILIATION, kafkaAssembly, null, Map.of(), Map.of(), false, SHARED_ENV_PROVIDER);
+            KafkaCluster.fromCrd(Reconciliation.DUMMY_RECONCILIATION, kafkaAssembly, pools, VERSIONS, false, null, SHARED_ENV_PROVIDER);
         });
     }
 
@@ -164,7 +174,7 @@ public class KafkaClusterOAuthValidationTest {
                     .endClientSecret()
                     .build();
 
-            ListenersValidator.validate(Reconciliation.DUMMY_RECONCILIATION, 3, getListeners(auth));
+            ListenersValidator.validate(Reconciliation.DUMMY_RECONCILIATION, THREE_NODES, getListeners(auth));
         });
     }
 
@@ -182,7 +192,7 @@ public class KafkaClusterOAuthValidationTest {
                     .endClientSecret()
                     .build();
 
-            ListenersValidator.validate(Reconciliation.DUMMY_RECONCILIATION, 3, getListeners(auth));
+            ListenersValidator.validate(Reconciliation.DUMMY_RECONCILIATION, THREE_NODES, getListeners(auth));
         });
     }
 
@@ -200,7 +210,7 @@ public class KafkaClusterOAuthValidationTest {
                     .endClientSecret()
                     .build();
 
-            ListenersValidator.validate(Reconciliation.DUMMY_RECONCILIATION, 3, getListeners(auth));
+            ListenersValidator.validate(Reconciliation.DUMMY_RECONCILIATION, THREE_NODES, getListeners(auth));
         });
     }
 
@@ -217,7 +227,7 @@ public class KafkaClusterOAuthValidationTest {
                 .endClientSecret()
                 .build();
 
-        ListenersValidator.validate(Reconciliation.DUMMY_RECONCILIATION, 3, getListeners(auth));
+        ListenersValidator.validate(Reconciliation.DUMMY_RECONCILIATION, THREE_NODES, getListeners(auth));
     }
 
     @ParallelTest
@@ -232,7 +242,7 @@ public class KafkaClusterOAuthValidationTest {
                     .endClientSecret()
                     .build();
 
-            ListenersValidator.validate(Reconciliation.DUMMY_RECONCILIATION, 3, getListeners(auth));
+            ListenersValidator.validate(Reconciliation.DUMMY_RECONCILIATION, THREE_NODES, getListeners(auth));
         });
     }
 
@@ -246,7 +256,7 @@ public class KafkaClusterOAuthValidationTest {
                     .withJwksExpirySeconds(89)
                     .build();
 
-            ListenersValidator.validate(Reconciliation.DUMMY_RECONCILIATION, 3, getListeners(auth));
+            ListenersValidator.validate(Reconciliation.DUMMY_RECONCILIATION, THREE_NODES, getListeners(auth));
         });
     }
 
@@ -259,7 +269,7 @@ public class KafkaClusterOAuthValidationTest {
                     .withJwksRefreshSeconds(333)
                     .build();
 
-            ListenersValidator.validate(Reconciliation.DUMMY_RECONCILIATION, 3, getListeners(auth));
+            ListenersValidator.validate(Reconciliation.DUMMY_RECONCILIATION, THREE_NODES, getListeners(auth));
         });
     }
 
@@ -272,7 +282,7 @@ public class KafkaClusterOAuthValidationTest {
                     .withJwksExpirySeconds(150)
                     .build();
 
-            ListenersValidator.validate(Reconciliation.DUMMY_RECONCILIATION, 3, getListeners(auth));
+            ListenersValidator.validate(Reconciliation.DUMMY_RECONCILIATION, THREE_NODES, getListeners(auth));
         });
     }
 
@@ -281,7 +291,7 @@ public class KafkaClusterOAuthValidationTest {
         assertThrows(InvalidResourceException.class, () -> {
             KafkaListenerAuthenticationOAuth auth = new KafkaListenerAuthenticationOAuthBuilder().build();
 
-            ListenersValidator.validate(Reconciliation.DUMMY_RECONCILIATION, 3, getListeners(auth));
+            ListenersValidator.validate(Reconciliation.DUMMY_RECONCILIATION, THREE_NODES, getListeners(auth));
         });
     }
 
@@ -292,7 +302,7 @@ public class KafkaClusterOAuthValidationTest {
                 .withJwksEndpointUri("http://jwks-endpoint")
                 .build();
 
-        ListenersValidator.validate(Reconciliation.DUMMY_RECONCILIATION, 3, getListeners(auth));
+        ListenersValidator.validate(Reconciliation.DUMMY_RECONCILIATION, THREE_NODES, getListeners(auth));
     }
 
     @ParallelTest
@@ -304,7 +314,7 @@ public class KafkaClusterOAuthValidationTest {
                     .withConnectTimeoutSeconds(0)
                     .build();
 
-            ListenersValidator.validate(Reconciliation.DUMMY_RECONCILIATION, 3, getListeners(auth));
+            ListenersValidator.validate(Reconciliation.DUMMY_RECONCILIATION, THREE_NODES, getListeners(auth));
         });
     }
 
@@ -317,7 +327,7 @@ public class KafkaClusterOAuthValidationTest {
                     .withReadTimeoutSeconds(0)
                     .build();
 
-            ListenersValidator.validate(Reconciliation.DUMMY_RECONCILIATION, 3, getListeners(auth));
+            ListenersValidator.validate(Reconciliation.DUMMY_RECONCILIATION, THREE_NODES, getListeners(auth));
         });
     }
 
@@ -330,7 +340,7 @@ public class KafkaClusterOAuthValidationTest {
                     .withGroupsClaim("['bad'.'query']")
                     .build();
 
-            ListenersValidator.validate(Reconciliation.DUMMY_RECONCILIATION, 3, getListeners(auth));
+            ListenersValidator.validate(Reconciliation.DUMMY_RECONCILIATION, THREE_NODES, getListeners(auth));
         });
     }
 
@@ -345,7 +355,7 @@ public class KafkaClusterOAuthValidationTest {
                     .endClientSecret()
                     .build();
 
-            ListenersValidator.validate(Reconciliation.DUMMY_RECONCILIATION, 3, getListeners(auth));
+            ListenersValidator.validate(Reconciliation.DUMMY_RECONCILIATION, THREE_NODES, getListeners(auth));
         });
     }
 
@@ -357,7 +367,7 @@ public class KafkaClusterOAuthValidationTest {
                     .withIntrospectionEndpointUri("http://introspection")
                     .build();
 
-            ListenersValidator.validate(Reconciliation.DUMMY_RECONCILIATION, 3, getListeners(auth));
+            ListenersValidator.validate(Reconciliation.DUMMY_RECONCILIATION, THREE_NODES, getListeners(auth));
         });
     }
 
@@ -370,7 +380,7 @@ public class KafkaClusterOAuthValidationTest {
                     .withJwksExpirySeconds(100)
                     .build();
 
-            ListenersValidator.validate(Reconciliation.DUMMY_RECONCILIATION, 3, getListeners(auth));
+            ListenersValidator.validate(Reconciliation.DUMMY_RECONCILIATION, THREE_NODES, getListeners(auth));
         });
     }
 
@@ -383,7 +393,7 @@ public class KafkaClusterOAuthValidationTest {
                     .withJwksRefreshSeconds(40)
                     .build();
 
-            ListenersValidator.validate(Reconciliation.DUMMY_RECONCILIATION, 3, getListeners(auth));
+            ListenersValidator.validate(Reconciliation.DUMMY_RECONCILIATION, THREE_NODES, getListeners(auth));
         });
     }
 
@@ -401,7 +411,7 @@ public class KafkaClusterOAuthValidationTest {
                     .withCheckAccessTokenType(false)
                     .build();
 
-            ListenersValidator.validate(Reconciliation.DUMMY_RECONCILIATION, 3, getListeners(auth));
+            ListenersValidator.validate(Reconciliation.DUMMY_RECONCILIATION, THREE_NODES, getListeners(auth));
         });
     }
 
@@ -417,7 +427,7 @@ public class KafkaClusterOAuthValidationTest {
                     .withAccessTokenIsJwt(false)
                     .build();
 
-            ListenersValidator.validate(Reconciliation.DUMMY_RECONCILIATION, 3, getListeners(auth));
+            ListenersValidator.validate(Reconciliation.DUMMY_RECONCILIATION, THREE_NODES, getListeners(auth));
         });
     }
 }

@@ -4,7 +4,6 @@
  */
 package io.strimzi.operator.common.model;
 
-import io.strimzi.operator.common.InvalidConfigParameterException;
 import java.io.BufferedReader;
 import java.io.BufferedWriter;
 import java.io.IOException;
@@ -32,7 +31,7 @@ public class OrderedProperties {
     /**
      * Filter key/value pairs
      *
-     * @param filter The predicate which determines wheather key/value pair will be retained.  The
+     * @param filter The predicate which determines whether key/value pair will be retained.  The
      * predicate is invoked with the key.  The pair is removed if the predicate returns true.
      * @return this instance for chaining
      */
@@ -146,7 +145,7 @@ public class OrderedProperties {
 
     /**
      * Return a Map view of the underlying key-value pairs. Any changes to this map will be reflected in
-     * in value returned by subsequent calls.
+     * the value returned by subsequent calls.
      *
      * @return A map of keys to values.
      */
@@ -255,7 +254,7 @@ public class OrderedProperties {
             }
         }
 
-        private String readToken(boolean breakOnKeySeperator) throws IOException {
+        private String readToken(boolean breakOnKeySeparator) throws IOException {
             StringBuilder sb = new StringBuilder();
             for (; ; ) {
                 switch (peekChar) {
@@ -264,7 +263,7 @@ public class OrderedProperties {
                     case ' ':
                     case ':':
                     case '=':
-                        if (!breakOnKeySeperator) {
+                        if (!breakOnKeySeparator) {
                             break;
                         }
                     case '\r':

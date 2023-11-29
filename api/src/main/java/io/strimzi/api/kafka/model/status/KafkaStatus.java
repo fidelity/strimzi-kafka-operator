@@ -22,15 +22,19 @@ import java.util.List;
         builderPackage = Constants.FABRIC8_KUBERNETES_API
 )
 @JsonInclude(JsonInclude.Include.NON_NULL)
-@JsonPropertyOrder({ "conditions", "observedGeneration", "listeners" })
+@JsonPropertyOrder({ "conditions", "observedGeneration", "listeners", "kafkaNodePools", "clusterId", "operatorLastSuccessfulVersion", "kafkaVersion", "kafkaMetadataVersion" })
 @EqualsAndHashCode
 @ToString(callSuper = true)
 public class KafkaStatus extends Status {
     private static final long serialVersionUID = 1L;
 
     private List<ListenerStatus> listeners;
+    private List<UsedNodePoolStatus> kafkaNodePools;
     
     private String clusterId;
+    private String operatorLastSuccessfulVersion;
+    private String kafkaVersion;
+    private String kafkaMetadataVersion;
 
     @Description("Addresses of the internal and external listeners")
     public List<ListenerStatus> getListeners() {
@@ -40,7 +44,16 @@ public class KafkaStatus extends Status {
     public void setListeners(List<ListenerStatus> listeners) {
         this.listeners = listeners;
     }
-    
+
+    @Description("List of the KafkaNodePools used by this Kafka cluster")
+    public List<UsedNodePoolStatus> getKafkaNodePools() {
+        return kafkaNodePools;
+    }
+
+    public void setKafkaNodePools(List<UsedNodePoolStatus> kafkaNodePools) {
+        this.kafkaNodePools = kafkaNodePools;
+    }
+
     @Description("Kafka cluster Id")
     public String getClusterId() {
         return clusterId;
@@ -48,5 +61,32 @@ public class KafkaStatus extends Status {
 
     public void setClusterId(String clusterId) {
         this.clusterId = clusterId;
+    }
+
+    @Description("The version of the Strimzi Cluster Operator which performed the last successful reconciliation.")
+    public String getOperatorLastSuccessfulVersion() {
+        return operatorLastSuccessfulVersion;
+    }
+
+    public void setOperatorLastSuccessfulVersion(String operatorLastSuccessfulVersion) {
+        this.operatorLastSuccessfulVersion = operatorLastSuccessfulVersion;
+    }
+
+    @Description("The version of Kafka currently deployed in the cluster.")
+    public String getKafkaVersion() {
+        return kafkaVersion;
+    }
+
+    public void setKafkaVersion(String kafkaVersion) {
+        this.kafkaVersion = kafkaVersion;
+    }
+
+    @Description("The KRaft metadata.version currently used by the Kafka cluster.")
+    public String getKafkaMetadataVersion() {
+        return kafkaMetadataVersion;
+    }
+
+    public void setKafkaMetadataVersion(String kafkaMetadataVersion) {
+        this.kafkaMetadataVersion = kafkaMetadataVersion;
     }
 }

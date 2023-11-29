@@ -8,7 +8,6 @@ import io.vertx.core.Promise;
 import io.vertx.junit5.Checkpoint;
 import io.vertx.junit5.VertxExtension;
 import io.vertx.junit5.VertxTestContext;
-import org.junit.jupiter.api.Assumptions;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 
@@ -25,12 +24,8 @@ public abstract class TopicStoreTestBase {
 
     protected TopicStore store;
 
-    protected abstract boolean canRunTest();
-
     @Test
     public void testCrud(VertxTestContext context) {
-        Assumptions.assumeTrue(canRunTest());
-
         Checkpoint async = context.checkpoint();
 
         String topicName = "my_topic_" + ThreadLocalRandom.current().nextInt(Integer.MAX_VALUE);
@@ -41,7 +36,7 @@ public abstract class TopicStoreTestBase {
 
         // Create the topic
         store.create(topic)
-            .onComplete(context.succeedingThenComplete())
+            .onComplete(context.succeeding(i -> { }))
 
             // Read the topic
             .compose(v -> store.read(new TopicName(topicName)))
@@ -68,7 +63,7 @@ public abstract class TopicStoreTestBase {
         failedCreateCompleted.future()
                 // update my_topic
                 .compose(v -> store.update(updatedTopic))
-            .onComplete(context.succeedingThenComplete())
+            .onComplete(context.succeeding(i -> { }))
 
             // re-read it and assert equal
             .compose(v -> store.read(new TopicName(topicName)))
@@ -82,7 +77,7 @@ public abstract class TopicStoreTestBase {
 
                 // delete it
                 .compose(v -> store.delete(updatedTopic.getTopicName()))
-                .onComplete(context.succeedingThenComplete())
+                .onComplete(context.succeeding(i -> { }))
 
                 // assert we can't read it again
                 .compose(v -> store.read(new TopicName(topicName)))

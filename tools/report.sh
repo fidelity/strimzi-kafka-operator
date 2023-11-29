@@ -1,11 +1,12 @@
 #!/usr/bin/env bash
+# Self contained Strimzi reporting tool.
 set -Eeuo pipefail
 if [[ $(uname -s) == "Darwin" ]]; then
   shopt -s expand_aliases
   alias echo="gecho"; alias grep="ggrep"; alias sed="gsed"; alias date="gdate"
 fi
 
-{ # this ensures the entire script is downloaded #
+{ # this ensures that the entire script is downloaded #
 NAMESPACE=""
 CLUSTER=""
 BRIDGE=""
@@ -20,12 +21,21 @@ SECRETS_OPT="hidden"
 # sed non-printable text delimiter
 SD=$(echo -en "\001") && readonly SD
 # sed sensitive information filter expression
-SE="s${SD}^\(\s*.*\password\s*:\s*\).*${SD}\1\[hidden\]${SD}; s${SD}^\(\s*.*\.key\s*:\s*\).*${SD}\1\[hidden\]${SD}" && readonly SE
+SE="s${SD}^\(\s*.*\password\s*:\s*\).*${SD}\1\<hidden>'${SD}; s${SD}^\(\s*.*\.key\s*:\s*\).*${SD}\1\<hidden>${SD}" && readonly SE
 
 error() {
-  echo -n "$@" 1>&2 && exit 1
+  echo "$@" 1>&2 && exit 1
 }
 
+# bash version check
+if [[ -z ${BASH_VERSINFO+x} ]]; then
+  error "No bash version information available, aborting"
+fi
+if [[ "${BASH_VERSINFO[0]}" -lt 4 ]]; then
+  error "You need bash version >= 4 to run the script"
+fi
+
+# kube client check
 if [[ -x "$(command -v kubectl)" ]]; then
   KUBECTL_INSTALLED=true
 else
@@ -34,12 +44,11 @@ else
     KUBE_CLIENT="oc"
   fi
 fi
-
 if [[ $OC_INSTALLED = false && $KUBECTL_INSTALLED = false ]]; then
   error "There is no kubectl or oc installed"
 fi
 
-# check kube connectivity
+# kube connectivity check
 $KUBE_CLIENT version -o yaml --request-timeout=5s 1>/dev/null
 
 readonly USAGE="
@@ -118,7 +127,7 @@ if [[ -z $NAMESPACE ]]; then
   error "$USAGE"
 fi
 
-if [[ $($KUBE_CLIENT get ns "$NAMESPACE" &>/dev/null) == "1" ]]; then
+if [[ -z $($KUBE_CLIENT get ns "$NAMESPACE" -o name --ignore-not-found) ]]; then
   error "Namespace $NAMESPACE not found! Exiting"
 fi
 
@@ -219,42 +228,49 @@ get_pod_logs() {
     local names && names=$($KUBE_CLIENT -n "$NAMESPACE" get po "$pod" -o jsonpath='{.spec.containers[*].name}' --ignore-not-found)
     local count && count=$(echo "$names" | wc -w)
     local logs
-    mkdir -p "$OUT_DIR"/reports/podlogs
+    mkdir -p "$OUT_DIR"/reports/logs
     if [[ "$count" -eq 1 ]]; then
       logs="$($KUBE_CLIENT -n "$NAMESPACE" logs "$pod" ||true)"
-      if [[ -n $logs ]]; then printf "%s" "$logs" > "$OUT_DIR"/reports/podlogs/"$pod".log; fi
+      if [[ -n $logs ]]; then printf "%s" "$logs" > "$OUT_DIR"/reports/logs/"$pod".log; fi
       logs="$($KUBE_CLIENT -n "$NAMESPACE" logs "$pod" -p 2>/dev/null ||true)"
-      if [[ -n $logs ]]; then printf "%s" "$logs" > "$OUT_DIR"/reports/podlogs/"$pod".log.0; fi
+      if [[ -n $logs ]]; then printf "%s" "$logs" > "$OUT_DIR"/reports/logs/"$pod".log.0; fi
     fi
     if [[ "$count" -gt 1 && -n "$con" && "$names" == *"$con"* ]]; then
       logs="$($KUBE_CLIENT -n "$NAMESPACE" logs "$pod" -c "$con" ||true)"
-      if [[ -n $logs ]]; then printf "%s" "$logs" > "$OUT_DIR"/reports/podlogs/"$pod"-"$con".log; fi
+      if [[ -n $logs ]]; then printf "%s" "$logs" > "$OUT_DIR"/reports/logs/"$pod"-"$con".log; fi
       logs="$($KUBE_CLIENT -n "$NAMESPACE" logs "$pod" -p -c "$con" 2>/dev/null ||true)"
-      if [[ -n $logs ]]; then printf "%s" "$logs" > "$OUT_DIR"/reports/podlogs/"$pod"-"$con".log.0; fi
+      if [[ -n $logs ]]; then printf "%s" "$logs" > "$OUT_DIR"/reports/logs/"$pod"-"$con".log.0; fi
     fi
   fi
 }
 
 echo "clusteroperator"
-CO_DEPLOY=$($KUBE_CLIENT get deploy strimzi-cluster-operator -o name -n "$NAMESPACE" --ignore-not-found) && readonly CO_DEPLOY
+CO_DEPLOY=$($KUBE_CLIENT get deploy strimzi-cluster-operator -o name -n "$NAMESPACE" --ignore-not-found)
 if [[ -n $CO_DEPLOY ]]; then
   echo "    $CO_DEPLOY"
-  $KUBE_CLIENT get deploy strimzi-cluster-operator -o yaml -n "$NAMESPACE" > "$OUT_DIR"/reports/deployments/cluster-operator.yaml
-  $KUBE_CLIENT get po -l strimzi.io/kind=cluster-operator -o yaml -n "$NAMESPACE" > "$OUT_DIR"/reports/pods/cluster-operator.yaml
-  CO_POD=$($KUBE_CLIENT get po -l strimzi.io/kind=cluster-operator -o name -n "$NAMESPACE" --ignore-not-found)
-  if [[ -n $CO_POD ]]; then
-    echo "    $CO_POD"
-    CO_POD=$(echo "$CO_POD" | cut -d "/" -f 2) && readonly CO_POD
-    get_pod_logs "$CO_POD"
+  CO_DEPLOY=$(echo "$CO_DEPLOY" | cut -d "/" -f 2) && readonly CO_DEPLOY
+  $KUBE_CLIENT get deploy "$CO_DEPLOY" -o yaml -n "$NAMESPACE" > "$OUT_DIR"/reports/deployments/"$CO_DEPLOY".yaml
+  CO_RS=$($KUBE_CLIENT get rs -l strimzi.io/kind=cluster-operator -o name -n "$NAMESPACE" --ignore-not-found)
+  if [[ -n $CO_RS ]]; then
+    echo "    $CO_RS"
+    CO_RS=$(echo "$CO_RS" | cut -d "/" -f 2) && readonly CO_RS
+    $KUBE_CLIENT get rs "$CO_RS" -o yaml -n "$NAMESPACE" > "$OUT_DIR"/reports/replicasets/"$CO_RS".yaml
   fi
-fi
-
-CO_RS=$($KUBE_CLIENT get rs -l strimzi.io/kind=cluster-operator -o name -n "$NAMESPACE" --ignore-not-found)
-if [[ -n $CO_RS ]]; then
-  echo "    $CO_RS"
-  CO_RS=$(echo "$CO_RS" | tail -n1) && echo "    $CO_RS"
-  CO_RS=$(echo "$CO_RS" | cut -d "/" -f 2) && readonly CO_RS
-  $KUBE_CLIENT get rs "$CO_RS" -n "$NAMESPACE" > "$OUT_DIR"/reports/replicasets/"$CO_RS".yaml
+  mapfile -t CO_PODS < <($KUBE_CLIENT get po -l strimzi.io/kind=cluster-operator -o name -n "$NAMESPACE" --ignore-not-found)
+  if [[ ${#CO_PODS[@]} -ne 0 ]]; then
+    for pod in "${CO_PODS[@]}"; do
+      echo "    $pod"
+      CO_POD=$(echo "$pod" | cut -d "/" -f 2)
+      $KUBE_CLIENT get po "$CO_POD" -o yaml -n "$NAMESPACE" > "$OUT_DIR"/reports/pods/"$CO_POD".yaml
+      get_pod_logs "$CO_POD"
+    done
+  fi
+  CO_CM=$($KUBE_CLIENT get cm strimzi-cluster-operator -o name -n "$NAMESPACE" --ignore-not-found)
+  if [[ -n $CO_CM ]]; then
+    echo "    $CO_CM"
+    CO_CM=$(echo "$CO_CM" | cut -d "/" -f 2) && readonly CO_CM
+    $KUBE_CLIENT get cm "$CO_CM" -o yaml -n "$NAMESPACE" > "$OUT_DIR"/reports/configmaps/"$CO_CM".yaml
+  fi
 fi
 
 echo "draincleaner"
@@ -272,16 +288,17 @@ if [[ -n $DC_DEPLOY ]]; then
 fi
 
 echo "customresources"
-mkdir -p "$OUT_DIR"/reports/crds "$OUT_DIR"/reports/crs
-CRDS=$($KUBE_CLIENT get crd -l app=strimzi -o name | cut -d "/" -f 2) && readonly CRDS
+mkdir -p "$OUT_DIR"/reports/customresourcedefinitions
+CRDS=$($KUBE_CLIENT get crd -l app=strimzi --ignore-not-found --no-headers -o=custom-columns=NAME:.metadata.name) && readonly CRDS
 for CRD in $CRDS; do
   RES=$($KUBE_CLIENT get "$CRD" -o name -n "$NAMESPACE" | cut -d "/" -f 2)
   if [[ -n $RES ]]; then
     echo "    $CRD"
-    $KUBE_CLIENT get crd "$CRD" -o yaml > "$OUT_DIR"/reports/crds/"$CRD".yaml
+    $KUBE_CLIENT get crd "$CRD" -o yaml > "$OUT_DIR"/reports/customresourcedefinitions/"$CRD".yaml
+    CR_DIR="${CRD//.*/}" && mkdir -p "$OUT_DIR"/reports/"$CR_DIR"
     for j in $RES; do
       RES=$(echo "$j" | cut -f 1 -d " ")
-      $KUBE_CLIENT get "$CRD" "$RES" -n "$NAMESPACE" -o yaml > "$OUT_DIR"/reports/crs/"$CRD"-"$RES".yaml
+      $KUBE_CLIENT get "$CRD" "$RES" -n "$NAMESPACE" -o yaml > "$OUT_DIR"/reports/"$CR_DIR"/"$RES".yaml
       echo "        $RES"
     done
   fi
@@ -294,44 +311,79 @@ if [[ -n $EVENTS ]]; then
   echo "$EVENTS" > "$OUT_DIR"/reports/events/events.txt
 fi
 
-echo "podlogs"
+echo "logs"
 mkdir -p "$OUT_DIR"/reports/configs
-PODS=$($KUBE_CLIENT get po -l strimzi.io/cluster="$CLUSTER" -o name -n "$NAMESPACE" | cut -d "/" -f 2)
-PODS="$PODS $($KUBE_CLIENT get po -l strimzi.io/cluster="$BRIDGE" -o name -n "$NAMESPACE" | cut -d "/" -f 2)"
-PODS="$PODS $($KUBE_CLIENT get po -l strimzi.io/cluster="$CONNECT" -o name -n "$NAMESPACE" | cut -d "/" -f 2)"
-PODS="$PODS $($KUBE_CLIENT get po -l strimzi.io/cluster="$MM2" -o name -n "$NAMESPACE" | cut -d "/" -f 2)"
-readonly PODS
-for POD in $PODS; do
-  echo "    $POD"
-  if [[ "$POD" =~ .*-zookeeper-[0-9]+ ]]; then
-    get_pod_logs "$POD" zookeeper
-    get_pod_logs "$POD" tls-sidecar
-    $KUBE_CLIENT exec -i "$POD" -n "$NAMESPACE" -c zookeeper -- \
-      cat /tmp/zookeeper.properties > "$OUT_DIR"/reports/configs/"$POD".cfg \
-      2>/dev/null||true
-  elif [[ "$POD" =~ .*-kafka-[0-9]+ ]]; then
-    get_pod_logs "$POD" kafka
-    get_pod_logs "$POD" tls-sidecar
-    $KUBE_CLIENT exec -i "$POD" -n "$NAMESPACE" -c kafka -- \
-      cat /tmp/strimzi.properties > "$OUT_DIR"/reports/configs/"$POD".cfg \
-      2>/dev/null||true
-  elif [[ "$POD" == *"-entity-operator-"* ]]; then
-    get_pod_logs "$POD" topic-operator
-    get_pod_logs "$POD" user-operator
-    get_pod_logs "$POD" tls-sidecar
-  elif [[ "$POD" == *"-kafka-exporter-"* ]]; then
-    get_pod_logs "$POD"
-  elif [[ "$POD" == *"-bridge-"* ]]; then
-    get_pod_logs "$POD"
-  elif [[ "$POD" == *"-connect-"* ]]; then
-    get_pod_logs "$POD"
-  elif [[ "$POD" == *"-mirrormaker2-"* ]]; then
-    get_pod_logs "$POD"
-  elif [[ "$POD" == *"-cruise-control-"* ]]; then
-    get_pod_logs "$POD" cruise-control
-    get_pod_logs "$POD" tls-sidecar
+mapfile -t KAFKA_PODS < <($KUBE_CLIENT -n "$NAMESPACE" get po -l strimzi.io/kind=Kafka,strimzi.io/name="$CLUSTER-kafka" --ignore-not-found --no-headers -o=custom-columns=NAME:.metadata.name)
+if [[ ${#KAFKA_PODS[@]} -ne 0 ]]; then
+  for pod in "${KAFKA_PODS[@]}"; do
+    echo "    $pod"
+    get_pod_logs "$pod" kafka
+    get_pod_logs "$pod" tls-sidecar # for old Strimzi releases
+    $KUBE_CLIENT -n "$NAMESPACE" exec -i "$pod" -c kafka -- \
+      cat /tmp/strimzi.properties > "$OUT_DIR"/reports/configs/"$pod".cfg 2>/dev/null||true
+  done
+fi
+mapfile -t ZOO_PODS < <($KUBE_CLIENT -n "$NAMESPACE" get po -l strimzi.io/kind=Kafka,strimzi.io/name="$CLUSTER-zookeeper" --ignore-not-found --no-headers -o=custom-columns=NAME:.metadata.name)
+if [[ ${#ZOO_PODS[@]} -ne 0 ]]; then
+  for pod in "${ZOO_PODS[@]}"; do
+    echo "    $pod"
+    get_pod_logs "$pod" zookeeper
+    get_pod_logs "$pod" tls-sidecar # for old Strimzi releases
+    $KUBE_CLIENT exec -i "$pod" -n "$NAMESPACE" -c zookeeper -- \
+      cat /tmp/zookeeper.properties > "$OUT_DIR"/reports/configs/"$pod".cfg 2>/dev/null||true
+  done
+fi
+mapfile -t ENTITY_PODS < <($KUBE_CLIENT -n "$NAMESPACE" get po -l strimzi.io/kind=Kafka,strimzi.io/name="$CLUSTER-entity-operator" --ignore-not-found --no-headers -o=custom-columns=NAME:.metadata.name)
+if [[ ${#ENTITY_PODS[@]} -ne 0 ]]; then
+  for pod in "${ENTITY_PODS[@]}"; do
+    echo "    $pod"
+    get_pod_logs "$pod" topic-operator
+    get_pod_logs "$pod" user-operator
+    get_pod_logs "$pod" tls-sidecar
+  done
+fi
+mapfile -t CC_PODS < <($KUBE_CLIENT -n "$NAMESPACE" get po -l strimzi.io/kind=Kafka,strimzi.io/name="$CLUSTER-cruise-control" --ignore-not-found --no-headers -o=custom-columns=NAME:.metadata.name)
+if [[ ${#CC_PODS[@]} -ne 0 ]]; then
+  for pod in "${CC_PODS[@]}"; do
+    echo "    $pod"
+    get_pod_logs "$pod"
+    get_pod_logs "$pod" tls-sidecar # for old Strimzi releases
+  done
+fi
+mapfile -t EXPORTER_PODS < <($KUBE_CLIENT -n "$NAMESPACE" get po -l strimzi.io/kind=Kafka,strimzi.io/name="$CLUSTER-kafka-exporter" --ignore-not-found --no-headers -o=custom-columns=NAME:.metadata.name)
+if [[ ${#EXPORTER_PODS[@]} -ne 0 ]]; then
+  for pod in "${EXPORTER_PODS[@]}"; do
+    echo "    $pod"
+    get_pod_logs "$pod"
+  done
+fi
+if [[ -n $BRIDGE ]]; then
+  mapfile -t BRIDGE_PODS < <($KUBE_CLIENT -n "$NAMESPACE" get po -l strimzi.io/kind=KafkaBridge,strimzi.io/name="$BRIDGE-bridge" --ignore-not-found --no-headers -o=custom-columns=NAME:.metadata.name)
+  if [[ ${#BRIDGE_PODS[@]} -ne 0 ]]; then
+    for pod in "${BRIDGE_PODS[@]}"; do
+      echo "    $pod"
+      get_pod_logs "$pod"
+    done
   fi
-done
+fi
+if [[ -n $CONNECT ]]; then
+  mapfile -t CONNECT_PODS < <($KUBE_CLIENT -n "$NAMESPACE" get po -l strimzi.io/kind=KafkaConnect,strimzi.io/name="$CONNECT-connect" --ignore-not-found --no-headers -o=custom-columns=NAME:.metadata.name)
+  if [[ ${#CONNECT_PODS[@]} -ne 0 ]]; then
+    for pod in "${CONNECT_PODS[@]}"; do
+      echo "    $pod"
+      get_pod_logs "$pod"
+    done
+  fi
+fi
+if [[ -n $MM2 ]]; then
+  mapfile -t MM2_PODS < <($KUBE_CLIENT -n "$NAMESPACE" get po -l strimzi.io/kind=KafkaMirrorMaker2,strimzi.io/name="$MM2-mirrormaker2" --ignore-not-found --no-headers -o=custom-columns=NAME:.metadata.name)
+  if [[ ${#MM2_PODS[@]} -ne 0 ]]; then
+    for pod in "${MM2_PODS[@]}"; do
+      echo "    $pod"
+      get_pod_logs "$pod"
+    done
+  fi
+fi
 
 FILENAME="report-$(date +"%d-%m-%Y_%H-%M-%S")"
 OLD_DIR="$(pwd)"
@@ -339,8 +391,8 @@ cd "$OUT_DIR" || exit
 zip -qr "$FILENAME".zip ./reports/
 cd "$OLD_DIR" || exit
 if [[ $OUT_DIR == *"tmp."* ]]; then
-  # let's keep the old behavior when --out-dir is not specified
+  # keeping the old behavior when --out-dir is not specified
   mv "$OUT_DIR"/"$FILENAME".zip ./
 fi
 echo "Report file $FILENAME.zip created"
-} # this ensures the entire script is downloaded #
+} # this ensures that the entire script is downloaded #

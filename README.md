@@ -6,6 +6,7 @@
 [![GitHub release](https://img.shields.io/github/release/strimzi/strimzi-kafka-operator.svg)](https://github.com/strimzi/strimzi-kafka-operator/releases/latest)
 [![License](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](http://www.apache.org/licenses/LICENSE-2.0)
 [![Twitter Follow](https://img.shields.io/twitter/follow/strimziio?style=social)](https://twitter.com/strimziio)
+[![Artifact Hub](https://img.shields.io/endpoint?url=https://artifacthub.io/badge/repository/strimzi-kafka-operator)](https://artifacthub.io/packages/search?repo=strimzi-kafka-operator)
 
 Strimzi provides a way to run an [Apache Kafka®][kafka] cluster on 
 [Kubernetes][k8s] or [OpenShift][os] in various deployment configurations.
@@ -18,6 +19,10 @@ To get up and running quickly, check our [Quick Start for Minikube, OKD (OpenShi
 ## Documentation
 
 Documentation to the current _main_ branch as well as all releases can be found on our [website][strimzi].
+
+## Roadmap
+
+The roadmap of the Strimzi Operator project is maintained as [GitHub Project](https://github.com/orgs/strimzi/projects/1).
 
 ## Getting help
 
@@ -62,6 +67,45 @@ If you want to get in touch with us first before contributing, you can use:
 
 ## License
 Strimzi is licensed under the [Apache License](./LICENSE), Version 2.0
+
+## Container signatures
+
+From the 0.38.0 release, Strimzi containers are signed using the [`cosign` tool](https://github.com/sigstore/cosign).
+Strimzi currently does not use the keyless signing and the transparency log.
+To verify the container, you can copy the following public key into a file:
+
+```
+-----BEGIN PUBLIC KEY-----
+MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAET3OleLR7h0JqatY2KkECXhA9ZAkC
+TRnbE23Wb5AzJPnpevvQ1QUEQQ5h/I4GobB7/jkGfqYkt6Ct5WOU2cc6HQ==
+-----END PUBLIC KEY-----
+```
+
+And use it to verify the signature:
+
+```
+cosign verify --key strimzi.pub quay.io/strimzi/operator:latest --insecure-ignore-tlog=true
+```
+
+## Software Bill of Materials (SBOM)
+
+From the 0.38.0 release, Strimzi publishes the software bill of materials (SBOM) of our containers.
+The SBOMs are published as an archive with `SPDX-JSON` and `Syft-Table` formats signed using cosign.
+For releases, they are also pushed into the container registry.
+To verify the SBOM signatures, please use the Strimzi public key:
+
+```
+-----BEGIN PUBLIC KEY-----
+MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAET3OleLR7h0JqatY2KkECXhA9ZAkC
+TRnbE23Wb5AzJPnpevvQ1QUEQQ5h/I4GobB7/jkGfqYkt6Ct5WOU2cc6HQ==
+-----END PUBLIC KEY-----
+```
+
+You can use it to verify the signature of the SBOM files with the following command:
+
+```
+cosign verify-blob --key cosign.pub --bundle <SBOM-file>.bundle --insecure-ignore-tlog=true <SBOM-file>
+```
 
 ---
 

@@ -12,7 +12,7 @@ import io.fabric8.kubernetes.api.model.Pod;
 import io.fabric8.openshift.api.model.Build;
 import io.strimzi.api.kafka.model.KafkaConnectResources;
 import io.strimzi.api.kafka.model.connect.build.Output;
-import io.strimzi.operator.PlatformFeaturesAvailability;
+import io.strimzi.operator.cluster.PlatformFeaturesAvailability;
 import io.strimzi.operator.cluster.ClusterOperatorConfig;
 import io.strimzi.operator.cluster.model.ImagePullPolicy;
 import io.strimzi.operator.cluster.model.KafkaConnectBuild;
@@ -58,7 +58,7 @@ public class ConnectBuildOperator {
      *
      * @param pfa       Describes the features available in the Kubernetes cluster
      * @param supplier  Resource operator supplier
-     * @param config    Cluster OPerator configuration
+     * @param config    Cluster operator configuration
      */
     public ConnectBuildOperator(PlatformFeaturesAvailability pfa, ResourceOperatorSupplier supplier, ClusterOperatorConfig config) {
         this.imageStreamOperations = supplier.imageStreamOperations;
@@ -327,12 +327,12 @@ public class ConnectBuildOperator {
      * Checks if the image stream is required and exists.
      *
      * @param namespace     Namespace where the BuildConfig exists
-     * @param buidlOutput   Build output configuration
+     * @param buildOutput   Build output configuration
      * @return              Future that completes when the check completes
      */
-    public Future<Void> validateImageStream(String namespace, Output buidlOutput)   {
-        if (buidlOutput != null && buidlOutput.getType().equals(Output.TYPE_IMAGESTREAM)) {
-            String imageName = buidlOutput.getImage().split(":")[0];
+    public Future<Void> validateImageStream(String namespace, Output buildOutput)   {
+        if (buildOutput != null && buildOutput.getType().equals(Output.TYPE_IMAGESTREAM)) {
+            String imageName = buildOutput.getImage().split(":")[0];
             return imageStreamOperations.getAsync(namespace, imageName)
                 .compose(is -> {
                     if (is == null) {
@@ -379,7 +379,7 @@ public class ConnectBuildOperator {
                                 && build.getStatus().getOutput().getTo().getImageDigest() != null) {
                             String digest = "@" + build.getStatus().getOutput().getTo().getImageDigest();
                             String image = build.getStatus().getOutputDockerImageReference();
-                            String tag = image.substring(image.lastIndexOf(":"));
+                            String tag = image.lastIndexOf(":") != -1 ? image.substring(image.lastIndexOf(":")) : "latest";
 
                             String imageWithDigest = image.replace(tag, digest);
 

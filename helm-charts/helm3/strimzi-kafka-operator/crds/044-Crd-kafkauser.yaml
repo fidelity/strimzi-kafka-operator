@@ -162,7 +162,7 @@ spec:
                       type: string
                       enum:
                         - simple
-                      description: Authorization type. Currently the only supported type is `simple`. `simple` authorization type uses Kafka's `kafka.security.authorizer.AclAuthorizer` class for authorization.
+                      description: Authorization type. Currently the only supported type is `simple`. `simple` authorization type uses the Kafka Admin API for managing the ACL rules.
                   required:
                     - acls
                     - type
@@ -199,11 +199,11 @@ spec:
                             labels:
                               x-kubernetes-preserve-unknown-fields: true
                               type: object
-                              description: "Labels added to the resource template. Can be applied to different resources such as `StatefulSets`, `Deployments`, `Pods`, and `Services`."
+                              description: Labels added to the Kubernetes resource.
                             annotations:
                               x-kubernetes-preserve-unknown-fields: true
                               type: object
-                              description: "Annotations added to the resource template. Can be applied to different resources such as `StatefulSets`, `Deployments`, `Pods`, and `Services`."
+                              description: Annotations added to the Kubernetes resource.
                           description: Metadata applied to the resource.
                       description: Template for KafkaUser resources. The template allows users to specify how the `Secret` with password or TLS certificates is generated.
                   description: Template to specify how Kafka User `Secrets` are generated.
@@ -383,7 +383,7 @@ spec:
                       type: string
                       enum:
                         - simple
-                      description: Authorization type. Currently the only supported type is `simple`. `simple` authorization type uses Kafka's `kafka.security.authorizer.AclAuthorizer` class for authorization.
+                      description: Authorization type. Currently the only supported type is `simple`. `simple` authorization type uses the Kafka Admin API for managing the ACL rules.
                   required:
                     - acls
                     - type
@@ -420,11 +420,11 @@ spec:
                             labels:
                               x-kubernetes-preserve-unknown-fields: true
                               type: object
-                              description: "Labels added to the resource template. Can be applied to different resources such as `StatefulSets`, `Deployments`, `Pods`, and `Services`."
+                              description: Labels added to the Kubernetes resource.
                             annotations:
                               x-kubernetes-preserve-unknown-fields: true
                               type: object
-                              description: "Annotations added to the resource template. Can be applied to different resources such as `StatefulSets`, `Deployments`, `Pods`, and `Services`."
+                              description: Annotations added to the Kubernetes resource.
                           description: Metadata applied to the resource.
                       description: Template for KafkaUser resources. The template allows users to specify how the `Secret` with password or TLS certificates is generated.
                   description: Template to specify how Kafka User `Secrets` are generated.
@@ -604,7 +604,7 @@ spec:
                       type: string
                       enum:
                         - simple
-                      description: Authorization type. Currently the only supported type is `simple`. `simple` authorization type uses Kafka's `kafka.security.authorizer.AclAuthorizer` class for authorization.
+                      description: Authorization type. Currently the only supported type is `simple`. `simple` authorization type uses the Kafka Admin API for managing the ACL rules.
                   required:
                     - acls
                     - type
@@ -641,11 +641,11 @@ spec:
                             labels:
                               x-kubernetes-preserve-unknown-fields: true
                               type: object
-                              description: "Labels added to the resource template. Can be applied to different resources such as `StatefulSets`, `Deployments`, `Pods`, and `Services`."
+                              description: Labels added to the Kubernetes resource.
                             annotations:
                               x-kubernetes-preserve-unknown-fields: true
                               type: object
-                              description: "Annotations added to the resource template. Can be applied to different resources such as `StatefulSets`, `Deployments`, `Pods`, and `Services`."
+                              description: Annotations added to the Kubernetes resource.
                           description: Metadata applied to the resource.
                       description: Template for KafkaUser resources. The template allows users to specify how the `Secret` with password or TLS certificates is generated.
                   description: Template to specify how Kafka User `Secrets` are generated.

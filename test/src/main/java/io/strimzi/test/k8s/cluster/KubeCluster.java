@@ -57,6 +57,12 @@ public interface KubeCluster {
                 case "minikube":
                     clusters = new KubeCluster[]{new Minikube()};
                     break;
+                case "kind":
+                    clusters = new KubeCluster[]{new Kind()};
+                    break;
+                case "microshift":
+                    clusters = new KubeCluster[]{new Microshift()};
+                    break;
                 case "kubernetes":
                     clusters = new KubeCluster[]{new Kubernetes()};
                     break;
@@ -65,7 +71,7 @@ public interface KubeCluster {
             }
         }
         if (clusters == null) {
-            clusters = new KubeCluster[]{new Minikube(), new Kubernetes(), new OpenShift()};
+            clusters = new KubeCluster[]{new Minikube(), new Kind(), new Kubernetes(), new OpenShift(), new Microshift()};
         }
         KubeCluster cluster = null;
         for (KubeCluster kc : clusters) {
@@ -89,8 +95,4 @@ public interface KubeCluster {
         logger.info("Using cluster: {}", cluster);
         return cluster;
     }
-
-
-    /** Return default OLM namespace */
-    String defaultOlmNamespace();
 }

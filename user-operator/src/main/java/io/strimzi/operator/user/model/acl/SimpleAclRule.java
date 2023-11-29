@@ -8,7 +8,7 @@ import io.strimzi.api.kafka.model.AclOperation;
 import io.strimzi.api.kafka.model.AclRule;
 import io.strimzi.api.kafka.model.AclRuleType;
 
-import io.strimzi.operator.cluster.model.InvalidResourceException;
+import io.strimzi.operator.common.model.InvalidResourceException;
 
 import org.apache.kafka.common.acl.AccessControlEntry;
 import org.apache.kafka.common.acl.AclBinding;
@@ -20,7 +20,7 @@ import java.util.List;
 import java.util.ArrayList;
 
 /**
- * Immutable class which represents a single ACL rule for AclAuthorizer.
+ * Immutable class which represents a single ACL rule for Kafka's built-in authorizer.
  * The main reason for not using directly the classes from the api module is that we need immutable objects for use in Sets.
  */
 public class SimpleAclRule {

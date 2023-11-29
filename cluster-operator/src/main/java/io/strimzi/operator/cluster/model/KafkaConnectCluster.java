@@ -23,7 +23,6 @@ import io.fabric8.kubernetes.api.model.Volume;
 import io.fabric8.kubernetes.api.model.VolumeBuilder;
 import io.fabric8.kubernetes.api.model.VolumeMount;
 import io.fabric8.kubernetes.api.model.VolumeMountBuilder;
-import io.fabric8.kubernetes.api.model.apps.Deployment;
 import io.fabric8.kubernetes.api.model.networking.v1.NetworkPolicy;
 import io.fabric8.kubernetes.api.model.networking.v1.NetworkPolicyIngressRule;
 import io.fabric8.kubernetes.api.model.networking.v1.NetworkPolicyPeer;
@@ -69,7 +68,6 @@ import io.strimzi.operator.cluster.model.metrics.MetricsModel;
 import io.strimzi.operator.cluster.model.metrics.SupportsMetrics;
 import io.strimzi.operator.cluster.model.securityprofiles.ContainerSecurityProviderContextImpl;
 import io.strimzi.operator.cluster.model.securityprofiles.PodSecurityProviderContextImpl;
-import io.strimzi.operator.common.MetricsAndLogging;
 import io.strimzi.operator.common.Reconciliation;
 import io.strimzi.operator.common.Util;
 import io.strimzi.operator.common.model.Labels;
@@ -104,11 +102,7 @@ public class KafkaConnectCluster extends AbstractModel implements SupportsMetric
     protected static final String LOG_AND_METRICS_CONFIG_VOLUME_MOUNT = "/opt/kafka/custom-config/";
 
     // Configuration defaults
-    /* test */ static final int DEFAULT_REPLICAS = 3;
-    /* test */ static final int DEFAULT_HEALTHCHECK_DELAY = 60;
-    /* test */ static final int DEFAULT_HEALTHCHECK_TIMEOUT = 5;
-    private static final Probe DEFAULT_HEALTHCHECK_OPTIONS = new ProbeBuilder().withInitialDelaySeconds(DEFAULT_HEALTHCHECK_TIMEOUT)
-            .withInitialDelaySeconds(DEFAULT_HEALTHCHECK_DELAY).build();
+    private static final Probe DEFAULT_HEALTHCHECK_OPTIONS = new ProbeBuilder().withInitialDelaySeconds(5).withInitialDelaySeconds(60).build();
 
     // Kafka Connect configuration keys (EnvVariables)
     protected static final String ENV_VAR_PREFIX = "KAFKA_CONNECT_";
@@ -128,7 +122,6 @@ public class KafkaConnectCluster extends AbstractModel implements SupportsMetric
     protected static final String ENV_VAR_KAFKA_CONNECT_OAUTH_REFRESH_TOKEN = "KAFKA_CONNECT_OAUTH_REFRESH_TOKEN";
     protected static final String ENV_VAR_KAFKA_CONNECT_OAUTH_PASSWORD_GRANT_PASSWORD = "KAFKA_CONNECT_OAUTH_PASSWORD_GRANT_PASSWORD";
     protected static final String ENV_VAR_STRIMZI_TRACING = "STRIMZI_TRACING";
-    protected static final String ENV_VAR_STRIMZI_STABLE_IDENTITIES_ENABLED = "STRIMZI_STABLE_IDENTITIES_ENABLED";
 
     protected static final String CO_ENV_VAR_CUSTOM_CONNECT_POD_LABELS = "STRIMZI_CUSTOM_KAFKA_CONNECT_LABELS";
 
@@ -173,9 +166,10 @@ public class KafkaConnectCluster extends AbstractModel implements SupportsMetric
      *
      * @param reconciliation The reconciliation
      * @param resource Kubernetes resource with metadata containing the namespace and cluster name
+     * @param sharedEnvironmentProvider Shared environment provider
      */
-    protected KafkaConnectCluster(Reconciliation reconciliation, HasMetadata resource) {
-        this(reconciliation, resource, KafkaConnectResources.deploymentName(resource.getMetadata().getName()), COMPONENT_TYPE);
+    protected KafkaConnectCluster(Reconciliation reconciliation, HasMetadata resource, SharedEnvironmentProvider sharedEnvironmentProvider) {
+        this(reconciliation, resource, KafkaConnectResources.deploymentName(resource.getMetadata().getName()), COMPONENT_TYPE, sharedEnvironmentProvider);
     }
 
     /**
@@ -183,19 +177,15 @@ public class KafkaConnectCluster extends AbstractModel implements SupportsMetric
      *
      * @param reconciliation The reconciliation
      * @param resource Kubernetes resource with metadata containing the namespace and cluster name
-     *                 @param name              Name of the Strimzi component usually consisting from the cluster name and component type
+     * @param name              Name of the Strimzi component usually consisting from the cluster name and component type
      * @param componentType configurable allow other classes to extend this class
+     * @param sharedEnvironmentProvider Shared environment provider
      */
-    protected KafkaConnectCluster(Reconciliation reconciliation, HasMetadata resource, String name, String componentType) {
-        super(reconciliation, resource, name, componentType);
+    protected KafkaConnectCluster(Reconciliation reconciliation, HasMetadata resource, String name, String componentType, SharedEnvironmentProvider sharedEnvironmentProvider) {
+        super(reconciliation, resource, name, componentType, sharedEnvironmentProvider);
 
         this.serviceName = KafkaConnectResources.serviceName(cluster);
         this.loggingAndMetricsConfigMapName = KafkaConnectResources.metricsAndLogConfigMapName(cluster);
-        this.replicas = DEFAULT_REPLICAS;
-        this.readinessPath = "/";
-        this.readinessProbeOptions = DEFAULT_HEALTHCHECK_OPTIONS;
-        this.livenessPath = "/";
-        this.livenessProbeOptions = DEFAULT_HEALTHCHECK_OPTIONS;
     }
 
     /**
@@ -204,11 +194,15 @@ public class KafkaConnectCluster extends AbstractModel implements SupportsMetric
      * @param reconciliation    Reconciliation marker
      * @param kafkaConnect      Kafka connect custom resource
      * @param versions          Supported Kafka versions
+     * @param sharedEnvironmentProvider Shared environment provider
      *
      * @return  Instance of the Kafka Connect model class
      */
-    public static KafkaConnectCluster fromCrd(Reconciliation reconciliation, KafkaConnect kafkaConnect, KafkaVersion.Lookup versions) {
-        return fromSpec(reconciliation, kafkaConnect.getSpec(), versions, new KafkaConnectCluster(reconciliation, kafkaConnect));
+    public static KafkaConnectCluster fromCrd(Reconciliation reconciliation,
+                                              KafkaConnect kafkaConnect,
+                                              KafkaVersion.Lookup versions,
+                                              SharedEnvironmentProvider sharedEnvironmentProvider) {
+        return fromSpec(reconciliation, kafkaConnect.getSpec(), versions, new KafkaConnectCluster(reconciliation, kafkaConnect, sharedEnvironmentProvider));
     }
 
     /**
@@ -228,7 +222,7 @@ public class KafkaConnectCluster extends AbstractModel implements SupportsMetric
                                                                 KafkaConnectSpec spec,
                                                                 KafkaVersion.Lookup versions,
                                                                 C result) {
-        result.replicas = spec.getReplicas() != null && spec.getReplicas() >= 0 ? spec.getReplicas() : DEFAULT_REPLICAS;
+        result.replicas = spec.getReplicas();
         result.tracing = spec.getTracing();
 
         // Might already contain configuration from Mirror Maker 2 which extends Connect
@@ -240,8 +234,7 @@ public class KafkaConnectCluster extends AbstractModel implements SupportsMetric
         }
         if (result.tracing != null)   {
             if (JaegerTracing.TYPE_JAEGER.equals(result.tracing.getType())) {
-                config.setConfigOption("consumer.interceptor.classes", JaegerTracing.CONSUMER_INTERCEPTOR_CLASS_NAME);
-                config.setConfigOption("producer.interceptor.classes", JaegerTracing.PRODUCER_INTERCEPTOR_CLASS_NAME);
+                LOGGER.warnCr(reconciliation, "Tracing type \"{}\" is not supported anymore and will be ignored", JaegerTracing.TYPE_JAEGER);
             } else if (OpenTelemetryTracing.TYPE_OPENTELEMETRY.equals(result.tracing.getType())) {
                 config.setConfigOption("consumer.interceptor.classes", OpenTelemetryTracing.CONSUMER_INTERCEPTOR_CLASS_NAME);
                 config.setConfigOption("producer.interceptor.classes", OpenTelemetryTracing.PRODUCER_INTERCEPTOR_CLASS_NAME);
@@ -265,13 +258,8 @@ public class KafkaConnectCluster extends AbstractModel implements SupportsMetric
                 result.ownerReference,
                 spec
         );
-
-        if (spec.getReadinessProbe() != null) {
-            result.readinessProbeOptions = spec.getReadinessProbe();
-        }
-        if (spec.getLivenessProbe() != null) {
-            result.livenessProbeOptions = spec.getLivenessProbe();
-        }
+        result.readinessProbeOptions = ProbeUtils.extractReadinessProbeOptionsOrDefault(spec, DEFAULT_HEALTHCHECK_OPTIONS);
+        result.livenessProbeOptions = ProbeUtils.extractLivenessProbeOptionsOrDefault(spec, DEFAULT_HEALTHCHECK_OPTIONS);
 
         result.setRack(spec.getRack());
 
@@ -491,51 +479,6 @@ public class KafkaConnectCluster extends AbstractModel implements SupportsMetric
     }
 
     /**
-     * Generates the Kafka Connect deployment
-     *
-     * @param replicas              Number of replicas the deployment should have
-     * @param deploymentAnnotations Map with Deployment annotations
-     * @param podAnnotations        Map with Pod annotations
-     * @param isOpenShift           Flag indicating if we are on OpenShift or not
-     * @param imagePullPolicy       Image pull policy
-     * @param imagePullSecrets      List of image pull Secrets
-     * @param customContainerImage  Custom container image produced by Kafka Connect Build. If null, the default
-     *                              image will be used.
-     * @return Generated deployment
-     */
-    public Deployment generateDeployment(int replicas,
-                                         Map<String, String> deploymentAnnotations,
-                                         Map<String, String> podAnnotations,
-                                         boolean isOpenShift,
-                                         ImagePullPolicy imagePullPolicy,
-                                         List<LocalObjectReference> imagePullSecrets,
-                                         String customContainerImage) {
-        return WorkloadUtils.createDeployment(
-                componentName,
-                namespace,
-                labels,
-                ownerReference,
-                templateDeployment,
-                replicas,
-                deploymentAnnotations,
-                WorkloadUtils.deploymentStrategy(TemplateUtils.deploymentStrategy(templateDeployment, ROLLING_UPDATE)),
-                WorkloadUtils.createPodTemplateSpec(
-                        componentName,
-                        labels,
-                        templatePod,
-                        defaultPodLabels(),
-                        podAnnotations,
-                        getMergedAffinity(),
-                        ContainerUtils.listOrNull(createInitContainer(imagePullPolicy)),
-                        List.of(createContainer(imagePullPolicy, customContainerImage, false)),
-                        getVolumes(isOpenShift),
-                        imagePullSecrets,
-                        securityProvider.kafkaConnectPodSecurityContext(new PodSecurityProviderContextImpl(templatePod))
-                )
-        );
-    }
-
-    /**
      * Generates the StrimziPodSet for the Kafka cluster.
      * enabled.
      *
@@ -585,7 +528,7 @@ public class KafkaConnectCluster extends AbstractModel implements SupportsMetric
                         componentName,
                         getMergedAffinity(),
                         ContainerUtils.listOrNull(createInitContainer(imagePullPolicy)),
-                        List.of(createContainer(imagePullPolicy, customContainerImage, true)),
+                        List.of(createContainer(imagePullPolicy, customContainerImage)),
                         getVolumes(isOpenShift),
                         imagePullSecrets,
                         securityProvider.kafkaConnectPodSecurityContext(new PodSecurityProviderContextImpl(templatePod))
@@ -613,18 +556,18 @@ public class KafkaConnectCluster extends AbstractModel implements SupportsMetric
         }
     }
 
-    private Container createContainer(ImagePullPolicy imagePullPolicy, String customContainerImage, boolean stableIdentities) {
+    private Container createContainer(ImagePullPolicy imagePullPolicy, String customContainerImage) {
         return ContainerUtils.createContainer(
                 componentName,
                 customContainerImage != null ? customContainerImage : image,
                 List.of(getCommand()),
                 securityProvider.kafkaConnectContainerSecurityContext(new ContainerSecurityProviderContextImpl(templateContainer)),
                 resources,
-                getEnvVars(stableIdentities),
+                getEnvVars(),
                 getContainerPortList(),
                 getVolumeMounts(),
-                ProbeGenerator.httpProbe(livenessProbeOptions, livenessPath, REST_API_PORT_NAME),
-                ProbeGenerator.httpProbe(readinessProbeOptions, readinessPath, REST_API_PORT_NAME),
+                ProbeUtils.httpProbe(livenessProbeOptions, "/", REST_API_PORT_NAME),
+                ProbeUtils.httpProbe(readinessProbeOptions, "/", REST_API_PORT_NAME),
                 imagePullPolicy
         );
     }
@@ -636,7 +579,7 @@ public class KafkaConnectCluster extends AbstractModel implements SupportsMetric
         varList.add(ContainerUtils.createEnvVar(ENV_VAR_KAFKA_INIT_RACK_TOPOLOGY_KEY, rack.getTopologyKey()));
 
         // Add shared environment variables used for all containers
-        varList.addAll(ContainerUtils.requiredEnvVars());
+        varList.addAll(sharedEnvironmentProvider.variables());
 
         ContainerUtils.addContainerEnvsToExistingEnvs(reconciliation, varList, templateInitContainer);
 
@@ -654,16 +597,16 @@ public class KafkaConnectCluster extends AbstractModel implements SupportsMetric
         return "/opt/kafka/kafka_connect_run.sh";
     }
 
-    protected List<EnvVar> getEnvVars(boolean stableIdentities) {
+    protected List<EnvVar> getEnvVars() {
         List<EnvVar> varList = new ArrayList<>();
         varList.add(ContainerUtils.createEnvVar(ENV_VAR_KAFKA_CONNECT_CONFIGURATION, configuration.getConfiguration()));
         varList.add(ContainerUtils.createEnvVar(ENV_VAR_KAFKA_CONNECT_METRICS_ENABLED, String.valueOf(metrics.isEnabled())));
         varList.add(ContainerUtils.createEnvVar(ENV_VAR_KAFKA_CONNECT_BOOTSTRAP_SERVERS, bootstrapServers));
         varList.add(ContainerUtils.createEnvVar(ENV_VAR_STRIMZI_KAFKA_GC_LOG_ENABLED, String.valueOf(gcLoggingEnabled)));
 
-        ModelUtils.heapOptions(varList, 75, 0L, jvmOptions, resources);
-        ModelUtils.jvmPerformanceOptions(varList, jvmOptions);
-        ModelUtils.jvmSystemProperties(varList, jvmOptions);
+        JvmOptionUtils.heapOptions(varList, 75, 0L, jvmOptions, resources);
+        JvmOptionUtils.jvmPerformanceOptions(varList, jvmOptions);
+        JvmOptionUtils.jvmSystemProperties(varList, jvmOptions);
 
         if (tls != null) {
             populateTLSEnvVars(varList);
@@ -678,15 +621,11 @@ public class KafkaConnectCluster extends AbstractModel implements SupportsMetric
         varList.addAll(jmx.envVars());
 
         // Add shared environment variables used for all containers
-        varList.addAll(ContainerUtils.requiredEnvVars());
+        varList.addAll(sharedEnvironmentProvider.variables());
 
         varList.addAll(getExternalConfigurationEnvVars());
 
         ContainerUtils.addContainerEnvsToExistingEnvs(reconciliation, varList, templateContainer);
-
-        if (stableIdentities)   {
-            varList.add(ContainerUtils.createEnvVar(ENV_VAR_STRIMZI_STABLE_IDENTITIES_ENABLED, "true"));
-        }
 
         return varList;
     }
@@ -784,31 +723,10 @@ public class KafkaConnectCluster extends AbstractModel implements SupportsMetric
     /**
      * Generates the PodDisruptionBudget
      *
-     * @param stableIdentities  Indicates whether the StableConnectIdentities (use of StrimziPodSets) feature gate is enabled or not
-     *
      * @return The pod disruption budget.
      */
-    public PodDisruptionBudget generatePodDisruptionBudget(boolean stableIdentities) {
-        if (stableIdentities) {
-            return PodDisruptionBudgetUtils.createCustomControllerPodDisruptionBudget(componentName, namespace, labels, ownerReference, templatePodDisruptionBudget, replicas);
-        } else {
-            return PodDisruptionBudgetUtils.createPodDisruptionBudget(componentName, namespace, labels, ownerReference, templatePodDisruptionBudget);
-        }
-    }
-
-    /**
-     * Generates the PodDisruptionBudgetV1Beta1
-     *
-     * @param stableIdentities  Indicates whether the StableConnectIdentities (use of StrimziPodSets) feature gate is enabled or not
-     *
-     * @return The pod disruption budget V1Beta1.
-     */
-    public io.fabric8.kubernetes.api.model.policy.v1beta1.PodDisruptionBudget generatePodDisruptionBudgetV1Beta1(boolean stableIdentities) {
-        if (stableIdentities) {
-            return PodDisruptionBudgetUtils.createCustomControllerPodDisruptionBudgetV1Beta1(componentName, namespace, labels, ownerReference, templatePodDisruptionBudget, replicas);
-        } else {
-            return PodDisruptionBudgetUtils.createPodDisruptionBudgetV1Beta1(componentName, namespace, labels, ownerReference, templatePodDisruptionBudget);
-        }
+    public PodDisruptionBudget generatePodDisruptionBudget() {
+        return PodDisruptionBudgetUtils.createCustomControllerPodDisruptionBudget(componentName, namespace, labels, ownerReference, templatePodDisruptionBudget, replicas);
     }
 
     /**
@@ -930,7 +848,7 @@ public class KafkaConnectCluster extends AbstractModel implements SupportsMetric
                         namespace,
                         labels,
                         ownerReference,
-                        MetricsAndLoggingUtils.generateMetricsAndLogConfigMapData(reconciliation, this, metricsAndLogging)
+                        ConfigMapUtils.generateMetricsAndLogConfigMapData(reconciliation, this, metricsAndLogging)
                 );
     }
 

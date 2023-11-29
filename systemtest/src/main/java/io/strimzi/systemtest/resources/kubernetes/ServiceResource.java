@@ -5,7 +5,7 @@
 package io.strimzi.systemtest.resources.kubernetes;
 
 import io.fabric8.kubernetes.api.model.Service;
-import io.strimzi.systemtest.Constants;
+import io.strimzi.systemtest.TestConstants;
 import io.strimzi.systemtest.resources.ResourceManager;
 import io.strimzi.systemtest.resources.ResourceType;
 import org.apache.logging.log4j.LogManager;
@@ -18,7 +18,7 @@ public class ServiceResource implements ResourceType<Service> {
 
     @Override
     public String getKind() {
-        return Constants.SERVICE;
+        return TestConstants.SERVICE;
     }
     @Override
     public Service get(String namespace, String name) {
@@ -32,14 +32,21 @@ public class ServiceResource implements ResourceType<Service> {
     public void delete(Service resource) {
         ResourceManager.kubeClient().namespace(resource.getMetadata().getNamespace()).deleteService(resource);
     }
+
+    @Override
+    @Deprecated
+    public void update(Service resource) {
+        ResourceManager.kubeClient().namespace(resource.getMetadata().getNamespace()).createService(resource);
+    }
+
     @Override
     public boolean waitForReadiness(Service resource) {
         return resource != null;
     }
 
     public static Service createServiceResource(ExtensionContext extensionContext, Service service, String clientNamespace) {
-        LOGGER.info("Creating Service {} in namespace {}", service.getMetadata().getName(), clientNamespace);
-        ResourceManager.getInstance().createResource(extensionContext, service);
+        LOGGER.info("Creating Service: {}/{}", clientNamespace, service.getMetadata().getName());
+        ResourceManager.getInstance().createResourceWithWait(extensionContext, service);
         return service;
     }
 }

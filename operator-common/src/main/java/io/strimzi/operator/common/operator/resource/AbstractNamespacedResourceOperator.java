@@ -11,6 +11,7 @@ import io.fabric8.kubernetes.api.model.LabelSelector;
 import io.fabric8.kubernetes.client.KubernetesClient;
 import io.fabric8.kubernetes.client.Watcher;
 import io.fabric8.kubernetes.client.dsl.FilterWatchListDeletable;
+import io.fabric8.kubernetes.client.dsl.Informable;
 import io.fabric8.kubernetes.client.dsl.MixedOperation;
 import io.fabric8.kubernetes.client.dsl.Resource;
 import io.fabric8.kubernetes.client.dsl.base.PatchContext;
@@ -18,17 +19,15 @@ import io.fabric8.kubernetes.client.dsl.base.PatchType;
 import io.fabric8.kubernetes.client.informers.SharedIndexInformer;
 import io.strimzi.operator.common.Reconciliation;
 import io.strimzi.operator.common.ReconciliationLogger;
-import io.strimzi.operator.common.Util;
+import io.strimzi.operator.common.VertxUtil;
 import io.strimzi.operator.common.model.Labels;
-import io.vertx.core.CompositeFuture;
 import io.vertx.core.Future;
-import io.vertx.core.Promise;
 import io.vertx.core.Vertx;
 
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
-import java.util.Optional;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.function.BiPredicate;
 import java.util.stream.Collectors;
 
@@ -49,7 +48,7 @@ public abstract class AbstractNamespacedResourceOperator<C extends KubernetesCli
     private static final ReconciliationLogger LOGGER = ReconciliationLogger.create(AbstractNamespacedResourceOperator.class);
 
     /**
-     * Marker for indication "all namesapces" => this is used for example when creating watches to create a cluster
+     * Marker for indication "all namespaces" => this is used for example when creating watches to create a cluster
      * wide watch.
      */
     public final static String ANY_NAMESPACE = "*";
@@ -76,8 +75,9 @@ public abstract class AbstractNamespacedResourceOperator<C extends KubernetesCli
      */
     public Future<ReconcileResult<T>> createOrUpdate(Reconciliation reconciliation, T resource) {
         if (resource == null) {
-            throw new NullPointerException();
+            return Future.failedFuture(new IllegalArgumentException("The " + resourceKind + " resource should not be null."));
         }
+
         return reconcile(reconciliation, resource.getMetadata().getNamespace(), resource.getMetadata().getName(), resource);
     }
 
@@ -97,34 +97,27 @@ public abstract class AbstractNamespacedResourceOperator<C extends KubernetesCli
             return Future.failedFuture("Given name " + name + " incompatible with desired name " + desired.getMetadata().getName());
         }
 
-        Promise<ReconcileResult<T>> promise = Promise.promise();
-        vertx.createSharedWorkerExecutor("kubernetes-ops-pool").executeBlocking(
-            future -> {
-                T current = operation().inNamespace(namespace).withName(name).get();
-                if (desired != null) {
-                    if (current == null) {
-                        LOGGER.debugCr(reconciliation, "{} {}/{} does not exist, creating it", resourceKind, namespace, name);
-                        internalCreate(reconciliation, namespace, name, desired).onComplete(future);
+        return getAsync(namespace, name)
+                .compose(current -> {
+                    if (desired != null) {
+                        if (current == null) {
+                            LOGGER.debugCr(reconciliation, "{} {}/{} does not exist, creating it", resourceKind, namespace, name);
+                            return internalCreate(reconciliation, namespace, name, desired);
+                        } else {
+                            LOGGER.debugCr(reconciliation, "{} {}/{} already exists, updating it", resourceKind, namespace, name);
+                            return internalUpdate(reconciliation, namespace, name, current, desired);
+                        }
                     } else {
-                        LOGGER.debugCr(reconciliation, "{} {}/{} already exists, updating it", resourceKind, namespace, name);
-                        internalUpdate(reconciliation, namespace, name, current, desired).onComplete(future);
+                        if (current != null) {
+                            // Deletion is desired
+                            LOGGER.debugCr(reconciliation, "{} {}/{} exist, deleting it", resourceKind, namespace, name);
+                            return internalDelete(reconciliation, namespace, name);
+                        } else {
+                            LOGGER.debugCr(reconciliation, "{} {}/{} does not exist, noop", resourceKind, namespace, name);
+                            return Future.succeededFuture(ReconcileResult.noop(null));
+                        }
                     }
-                } else {
-                    if (current != null) {
-                        // Deletion is desired
-                        LOGGER.debugCr(reconciliation, "{} {}/{} exist, deleting it", resourceKind, namespace, name);
-                        internalDelete(reconciliation, namespace, name).onComplete(future);
-                    } else {
-                        LOGGER.debugCr(reconciliation, "{} {}/{} does not exist, noop", resourceKind, namespace, name);
-                        future.complete(ReconcileResult.noop(null));
-                    }
-                }
-
-            },
-            false,
-            promise
-        );
-        return promise.future();
+                });
     }
 
     /**
@@ -141,11 +134,11 @@ public abstract class AbstractNamespacedResourceOperator<C extends KubernetesCli
      *
      * @return  Future which completes when the lists are reconciled
      */
-    public Future<Void> batchReconcile(Reconciliation reconciliation, String namespace, List<T> desired, Labels selector)  {
+    public Future<Map<String, ReconcileResult<T>>> batchReconcile(Reconciliation reconciliation, String namespace, List<T> desired, Labels selector)  {
         return listAsync(namespace, selector)
                 .compose(current -> {
-                    @SuppressWarnings({ "rawtypes" }) // Has to use Raw type because of the CompositeFuture
-                    List<Future> futures = new ArrayList<>(desired.size());
+                    List<Future<ReconcileResult<T>>> futures = new ArrayList<>(desired.size());
+                    Map<String, ReconcileResult<T>> reconcileResults = new ConcurrentHashMap<>();
                     List<String> currentNames = current.stream().map(ingress -> ingress.getMetadata().getName()).collect(Collectors.toList());
 
                     LOGGER.debugCr(reconciliation, "Reconciling existing {} resources {} against the desired {} resources", resourceKind, currentNames, resourceKind);
@@ -154,19 +147,25 @@ public abstract class AbstractNamespacedResourceOperator<C extends KubernetesCli
                     for (T desiredResource : desired) {
                         String name = desiredResource.getMetadata().getName();
                         currentNames.remove(name);
-                        futures.add(reconcile(reconciliation, namespace, name, desiredResource));
+                        futures.add(reconcile(reconciliation, namespace, name, desiredResource).map(result -> {
+                            reconcileResults.put(name, result);
+                            return result;
+                        }));
                     }
 
                     LOGGER.debugCr(reconciliation, "{} {}/{} should be deleted", resourceKind, namespace, currentNames);
 
                     // Delete resources which match our selector but are not desired anymore
                     for (String name : currentNames) {
-                        futures.add(reconcile(reconciliation, namespace, name, null));
+                        futures.add(reconcile(reconciliation, namespace, name, null).map(result -> {
+                            reconcileResults.put(name, result);
+                            return result;
+                        }));
                     }
 
-                    return CompositeFuture
+                    return Future
                             .join(futures)
-                            .map((Void) null);
+                            .map(reconcileResults);
                 });
     }
 
@@ -193,7 +192,7 @@ public abstract class AbstractNamespacedResourceOperator<C extends KubernetesCli
      * @param reconciliation The reconciliation
      * @param namespace Namespace of the resource which should be deleted
      * @param name Name of the resource which should be deleted
-     * @param cascading Defines whether the delete should be cascading or not (e.g. whether a STS deletion should delete pods etc.)
+     * @param cascading Defines whether the deletion should be cascading or not (e.g. whether an STS deletion should delete pods etc.)
      *
      * @return A future which will be completed on the context thread
      *         once the resource has been deleted.
@@ -226,7 +225,7 @@ public abstract class AbstractNamespacedResourceOperator<C extends KubernetesCli
 
         Future<Void> deleteFuture = resourceSupport.deleteAsync(resourceOp.withPropagationPolicy(cascading ? DeletionPropagation.FOREGROUND : DeletionPropagation.ORPHAN).withGracePeriod(-1L));
 
-        return CompositeFuture.join(watchForDeleteFuture, deleteFuture).map(ReconcileResult.deleted());
+        return Future.join(watchForDeleteFuture, deleteFuture).map(ReconcileResult.deleted());
     }
 
     /**
@@ -250,7 +249,7 @@ public abstract class AbstractNamespacedResourceOperator<C extends KubernetesCli
     }
 
     /**
-     * Method for patching or replacing a resource. By default is using JSON-type patch. Overriding this method can be
+     * Method for patching or replacing a resource. By default, is using JSON-type patch. Overriding this method can be
      * used to use replace instead of patch or different patch strategies.
      *
      * @param namespace     Namespace of the resource
@@ -299,8 +298,9 @@ public abstract class AbstractNamespacedResourceOperator<C extends KubernetesCli
      */
     public Future<T> getAsync(String namespace, String name) {
         if (name == null || name.isEmpty()) {
-            throw new IllegalArgumentException(namespace + "/" + resourceKind + " with an empty name cannot be configured. Please provide a name.");
+            return Future.failedFuture(new IllegalArgumentException(namespace + "/" + resourceKind + " with an empty name cannot be configured. Please provide a name."));
         }
+
         return resourceSupport.getAsync(operation().inNamespace(namespace).withName(name));
     }
 
@@ -349,7 +349,7 @@ public abstract class AbstractNamespacedResourceOperator<C extends KubernetesCli
      *
      * @return A Future with a list of matching resources.
      */
-    public Future<List<T>> listAsync(String namespace, Optional<LabelSelector> selector) {
+    public Future<List<T>> listAsync(String namespace, LabelSelector selector) {
         return listAsync(applySelector(applyNamespace(namespace), selector));
     }
 
@@ -385,7 +385,7 @@ public abstract class AbstractNamespacedResourceOperator<C extends KubernetesCli
      * is ready.
      */
     public Future<Void> waitFor(Reconciliation reconciliation, String namespace, String name, String logState, long pollIntervalMs, final long timeoutMs, BiPredicate<String, String> predicate) {
-        return Util.waitFor(reconciliation, vertx,
+        return VertxUtil.waitFor(reconciliation, vertx,
             String.format("%s resource %s in namespace %s", resourceKind, name, namespace),
             logState,
             pollIntervalMs,
@@ -408,52 +408,58 @@ public abstract class AbstractNamespacedResourceOperator<C extends KubernetesCli
     }
 
     /**
-     * Creates the informer for given resource type to inform on all instances in given namespace (or cluster-wide).
+     * Creates the informer for given resource type to inform on all instances in given namespace (or cluster-wide). The
+     * informer returned by this method is not running and has to be started by the code using it.
      *
-     * @param namespace Namespace on which to inform
+     * @param namespace         Namespace on which to inform
+     * @param resyncIntervalMs  The interval in which the resync of the informer should happen in milliseconds
      *
      * @return          Informer instance
      */
-    public SharedIndexInformer<T> informer(String namespace)   {
-        if (ANY_NAMESPACE.equals(namespace))    {
-            return operation().inAnyNamespace().inform();
-        } else {
-            return operation().inNamespace(namespace).inform();
-        }
+    public SharedIndexInformer<T> informer(String namespace, long resyncIntervalMs)   {
+        return runnableInformer(applyNamespace(namespace), resyncIntervalMs);
     }
 
     /**
      * Creates the informer for given resource type to inform on all instances in given namespace (or cluster-wide)
-     * matching the selector.
+     * matching the selector. The informer returned by this method is not running and has to be started by the code
+     * using it.
      *
      * @param namespace         Namespace on which to inform
      * @param selectorLabels    Selector which should be matched by the resources
+     * @param resyncIntervalMs  The interval in which the resync of the informer should happen in milliseconds
      *
      * @return                  Informer instance
      */
-    public SharedIndexInformer<T> informer(String namespace, Map<String, String> selectorLabels)   {
-        if (ANY_NAMESPACE.equals(namespace))    {
-            return operation().inAnyNamespace().withLabels(selectorLabels).inform();
-        } else {
-            return operation().inNamespace(namespace).withLabels(selectorLabels).inform();
-        }
+    public SharedIndexInformer<T> informer(String namespace, Map<String, String> selectorLabels, long resyncIntervalMs)   {
+        return runnableInformer(applyNamespace(namespace).withLabels(selectorLabels), resyncIntervalMs);
     }
 
     /**
      * Creates the informer for given resource type to inform on all instances in given namespace (or cluster-wide)
-     * matching the selector.
+     * matching the selector. The informer returned by this method is not running and has to be started by the code
+     * using it.
      *
      * @param namespace         Namespace on which to inform
      * @param labelSelector     Labels Selector which should be matched by the resources
+     * @param resyncIntervalMs  The interval in which the resync of the informer should happen in milliseconds
      *
      * @return                  Informer instance
      */
-    public SharedIndexInformer<T> informer(String namespace, LabelSelector labelSelector)   {
-        if (ANY_NAMESPACE.equals(namespace))    {
-            return operation().inAnyNamespace().withLabelSelector(labelSelector).inform();
-        } else {
-            return operation().inNamespace(namespace).withLabelSelector(labelSelector).inform();
-        }
+    public SharedIndexInformer<T> informer(String namespace, LabelSelector labelSelector, long resyncIntervalMs)   {
+        return runnableInformer(applyNamespace(namespace).withLabelSelector(labelSelector), resyncIntervalMs);
+    }
+
+    /**
+     * Creates a runnable informer. Runnable informer is not running yet and need to be started by the code using it.
+     *
+     * @param informable        Instance of the Informable interface for creating informers
+     * @param resyncIntervalMs  The interval in which the resync of the informer should happen in milliseconds
+     *
+     * @return  Runnable informer
+     */
+    private SharedIndexInformer<T> runnableInformer(Informable<T> informable, long resyncIntervalMs)  {
+        return informable.runnableInformer(resyncIntervalMs);
     }
 
     /**

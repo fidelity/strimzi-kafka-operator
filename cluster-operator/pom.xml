@@ -4,7 +4,7 @@
     <parent>
         <groupId>io.strimzi</groupId>
         <artifactId>strimzi</artifactId>
-        <version>0.35.0-SNAPSHOT</version>
+        <version>0.39.0-SNAPSHOT</version>
     </parent>
     <modelVersion>4.0.0</modelVersion>
     <artifactId>cluster-operator</artifactId>
@@ -15,6 +15,11 @@
             <url>https://www.apache.org/licenses/LICENSE-2.0.txt</url>
         </license>
     </licenses>
+
+    <properties>
+        <!-- Points to the root directory of the Strimzi project directory and can be used for fixed location to configuration files -->
+        <strimziRootDirectory>${basedir}${file.separator}..</strimziRootDirectory>
+    </properties>
 
     <dependencies>
         <dependency>
@@ -55,6 +60,10 @@
         <dependency>
             <groupId>io.fabric8</groupId>
             <artifactId>kubernetes-model-core</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>io.fabric8</groupId>
+            <artifactId>kubernetes-model-common</artifactId>
         </dependency>
         <dependency>
             <groupId>io.fabric8</groupId>
@@ -127,11 +136,6 @@
         <dependency>
             <groupId>org.apache.logging.log4j</groupId>
             <artifactId>log4j-slf4j-impl</artifactId>
-        </dependency>
-        <dependency>
-            <!-- Used because of OkHttp client which is using JUL (java.util.logging)-->
-            <groupId>org.apache.logging.log4j</groupId>
-            <artifactId>log4j-jul</artifactId>
         </dependency>
         <dependency>
             <groupId>io.strimzi</groupId>
@@ -220,6 +224,11 @@
             <artifactId>kafka-clients</artifactId>
         </dependency>
         <dependency>
+            <!-- Required for managing KRaft Metadata version -->
+            <groupId>org.apache.kafka</groupId>
+            <artifactId>kafka-server-common</artifactId>
+        </dependency>
+        <dependency>
             <groupId>org.apache.zookeeper</groupId>
             <artifactId>zookeeper</artifactId>
         </dependency>
@@ -235,11 +244,6 @@
             <groupId>io.netty</groupId>
             <artifactId>netty-transport-native-epoll</artifactId>
             <classifier>linux-x86_64</classifier>
-        </dependency>
-        <dependency>
-            <groupId>org.scala-lang</groupId>
-            <artifactId>scala-library</artifactId>
-            <scope>test</scope>
         </dependency>
         <dependency>
             <groupId>io.micrometer</groupId>
@@ -329,6 +333,11 @@
         <resources>
             <resource>
                 <directory>src/main/resources</directory>
+            </resource>
+            <resource>
+                <!-- separate folder for filtered resources so that non-filtered files don't have their ${} replaced -->
+                <directory>src/main/resources-filtered</directory>
+                <filtering>true</filtering>
             </resource>
             <resource>
                 <directory>..</directory>

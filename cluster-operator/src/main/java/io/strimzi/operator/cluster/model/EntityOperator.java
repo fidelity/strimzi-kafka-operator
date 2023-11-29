@@ -13,6 +13,8 @@ import io.fabric8.kubernetes.api.model.LifecycleBuilder;
 import io.fabric8.kubernetes.api.model.LocalObjectReference;
 import io.fabric8.kubernetes.api.model.Volume;
 import io.fabric8.kubernetes.api.model.apps.Deployment;
+import io.fabric8.kubernetes.api.model.networking.v1.NetworkPolicy;
+import io.fabric8.kubernetes.api.model.networking.v1.NetworkPolicyIngressRule;
 import io.fabric8.kubernetes.api.model.rbac.ClusterRole;
 import io.fabric8.kubernetes.api.model.rbac.PolicyRule;
 import io.fabric8.kubernetes.api.model.rbac.Role;
@@ -20,13 +22,13 @@ import io.strimzi.api.kafka.model.EntityOperatorSpec;
 import io.strimzi.api.kafka.model.Kafka;
 import io.strimzi.api.kafka.model.KafkaClusterSpec;
 import io.strimzi.api.kafka.model.KafkaResources;
+import io.strimzi.api.kafka.model.Probe;
 import io.strimzi.api.kafka.model.TlsSidecar;
 import io.strimzi.api.kafka.model.template.DeploymentTemplate;
 import io.strimzi.api.kafka.model.template.EntityOperatorTemplate;
 import io.strimzi.api.kafka.model.template.PodTemplate;
 import io.strimzi.api.kafka.model.template.ResourceTemplate;
 import io.strimzi.operator.cluster.ClusterOperatorConfig;
-import io.strimzi.operator.cluster.Main;
 import io.strimzi.operator.cluster.model.securityprofiles.ContainerSecurityProviderContextImpl;
 import io.strimzi.operator.cluster.model.securityprofiles.PodSecurityProviderContextImpl;
 import io.strimzi.operator.common.Reconciliation;
@@ -73,9 +75,15 @@ public class EntityOperator extends AbstractModel {
 
     protected static final String CO_ENV_VAR_CUSTOM_ENTITY_OPERATOR_POD_LABELS = "STRIMZI_CUSTOM_ENTITY_OPERATOR_LABELS";
 
+    /**
+     * Default healthcheck options used by the Topic and User operators
+     */
+    protected static final Probe DEFAULT_HEALTHCHECK_OPTIONS = new io.strimzi.api.kafka.model.ProbeBuilder().withTimeoutSeconds(5).withInitialDelaySeconds(10).build();
+
     /* test */ String zookeeperConnect;
     private EntityTopicOperator topicOperator;
     private EntityUserOperator userOperator;
+    /* test */  boolean unidirectionalTopicOperator;
     private TlsSidecar tlsSidecar;
     private String tlsSidecarImage;
 
@@ -96,9 +104,10 @@ public class EntityOperator extends AbstractModel {
      *
      * @param reconciliation    Reconciliation marker
      * @param resource          Kafka custom resource
+     * @param sharedEnvironmentProvider Shared environment provider
      */
-    protected EntityOperator(Reconciliation reconciliation, HasMetadata resource) {
-        super(reconciliation, resource, KafkaResources.entityOperatorDeploymentName(resource.getMetadata().getName()), COMPONENT_TYPE);
+    protected EntityOperator(Reconciliation reconciliation, HasMetadata resource, SharedEnvironmentProvider sharedEnvironmentProvider) {
+        super(reconciliation, resource, KafkaResources.entityOperatorDeploymentName(resource.getMetadata().getName()), COMPONENT_TYPE, sharedEnvironmentProvider);
 
         this.zookeeperConnect = KafkaResources.zookeeperServiceName(cluster) + ":" + ZookeeperCluster.CLIENT_TLS_PORT;
     }
@@ -106,25 +115,45 @@ public class EntityOperator extends AbstractModel {
     /**
      * Create an Entity Operator from given desired resource
      *
-     * @param reconciliation The reconciliation
-     * @param kafkaAssembly desired resource with cluster configuration containing the Entity Operator one
-     * @param versions The versions.
-     * @param kraftEnabled Indicates whether KRaft is used in the Kafka cluster
+     * @param reconciliation                The reconciliation
+     * @param kafkaAssembly                 Desired resource with cluster configuration containing the Entity Operator one
+     * @param versions                      The supported Kafka versions
+     * @param sharedEnvironmentProvider     Shared environment provider
      *
      * @return Entity Operator instance, null if not configured in the ConfigMap
      */
-    public static EntityOperator fromCrd(Reconciliation reconciliation, Kafka kafkaAssembly, KafkaVersion.Lookup versions, boolean kraftEnabled) {
+    public static EntityOperator fromCrd(Reconciliation reconciliation, Kafka kafkaAssembly, KafkaVersion.Lookup versions, SharedEnvironmentProvider sharedEnvironmentProvider) {
+        return fromCrd(reconciliation, kafkaAssembly, versions, sharedEnvironmentProvider, false);
+    }
+    
+    /**
+     * Create an Entity Operator from given desired resource
+     *
+     * @param reconciliation The reconciliation
+     * @param kafkaAssembly desired resource with cluster configuration containing the Entity Operator one
+     * @param versions The versions.
+     * @param sharedEnvironmentProvider     Shared environment provider.
+     * @param unidirectionalTopicOperator Indicates whether the UTO should be used.
+     *
+     * @return Entity Operator instance, null if not configured in the ConfigMap
+     */
+    public static EntityOperator fromCrd(Reconciliation reconciliation,
+                                         Kafka kafkaAssembly,
+                                         KafkaVersion.Lookup versions,
+                                         SharedEnvironmentProvider sharedEnvironmentProvider,
+                                         boolean unidirectionalTopicOperator) {
         EntityOperatorSpec entityOperatorSpec = kafkaAssembly.getSpec().getEntityOperator();
 
         if (entityOperatorSpec != null
                 && (entityOperatorSpec.getUserOperator() != null || entityOperatorSpec.getTopicOperator() != null)) {
-            EntityOperator result = new EntityOperator(reconciliation, kafkaAssembly);
+            EntityOperator result = new EntityOperator(reconciliation, kafkaAssembly, sharedEnvironmentProvider);
 
-            EntityTopicOperator topicOperator = EntityTopicOperator.fromCrd(reconciliation, kafkaAssembly);
-            EntityUserOperator userOperator = EntityUserOperator.fromCrd(reconciliation, kafkaAssembly, kraftEnabled);
+            EntityTopicOperator topicOperator = EntityTopicOperator.fromCrd(reconciliation, kafkaAssembly, sharedEnvironmentProvider, unidirectionalTopicOperator);
+            EntityUserOperator userOperator = EntityUserOperator.fromCrd(reconciliation, kafkaAssembly, sharedEnvironmentProvider);
 
             result.tlsSidecar = entityOperatorSpec.getTlsSidecar();
             result.topicOperator = topicOperator;
+            result.unidirectionalTopicOperator = unidirectionalTopicOperator;
             result.userOperator = userOperator;
 
             String tlsSideCarImage = entityOperatorSpec.getTlsSidecar() != null ? entityOperatorSpec.getTlsSidecar().getImage() : null;
@@ -217,8 +246,9 @@ public class EntityOperator extends AbstractModel {
             containers.add(userOperator.createContainer(imagePullPolicy));
         }
 
-        // The TLS Sidecar is only used by the Topic Operator. Therefore, when the Topic Operator is disabled, the TLS side should also be disabled.
-        if (topicOperator != null) {
+        // The TLS Sidecar is only used by the Bidirectional Topic Operator.
+        // Therefore, when the Topic Operator is disabled, or we're using the Unidirectional TO, the TLS side should also be disabled.
+        if (topicOperator != null && !this.unidirectionalTopicOperator) {
             String tlsSidecarImage = this.tlsSidecarImage;
             if (tlsSidecar != null && tlsSidecar.getImage() != null) {
                 tlsSidecarImage = tlsSidecar.getImage();
@@ -235,8 +265,8 @@ public class EntityOperator extends AbstractModel {
                     List.of(VolumeUtils.createTempDirVolumeMount(TLS_SIDECAR_TMP_DIRECTORY_DEFAULT_VOLUME_NAME),
                             VolumeUtils.createVolumeMount(ETO_CERTS_VOLUME_NAME, ETO_CERTS_VOLUME_MOUNT),
                             VolumeUtils.createVolumeMount(TLS_SIDECAR_CA_CERTS_VOLUME_NAME, TLS_SIDECAR_CA_CERTS_VOLUME_MOUNT)),
-                    ProbeGenerator.tlsSidecarLivenessProbe(tlsSidecar),
-                    ProbeGenerator.tlsSidecarReadinessProbe(tlsSidecar),
+                    ProbeUtils.tlsSidecarLivenessProbe(tlsSidecar),
+                    ProbeUtils.tlsSidecarReadinessProbe(tlsSidecar),
                     null,
                     imagePullPolicy,
                     new LifecycleBuilder().withNewPreStop().withNewExec().withCommand("/opt/stunnel/entity_operator_stunnel_pre_stop.sh").endExec().endPreStop().build()
@@ -254,7 +284,7 @@ public class EntityOperator extends AbstractModel {
         varList.add(ContainerUtils.createEnvVar(ENV_VAR_ZOOKEEPER_CONNECT, zookeeperConnect));
 
         // Add shared environment variables used for all containers
-        varList.addAll(ContainerUtils.requiredEnvVars());
+        varList.addAll(sharedEnvironmentProvider.variables());
 
         ContainerUtils.addContainerEnvsToExistingEnvs(reconciliation, varList, templateContainer);
 
@@ -276,7 +306,9 @@ public class EntityOperator extends AbstractModel {
             volumeList.add(VolumeUtils.createSecretVolume(EUO_CERTS_VOLUME_NAME, KafkaResources.entityUserOperatorSecretName(cluster), isOpenShift));
         }
 
-        volumeList.add(VolumeUtils.createTempDirVolume(TLS_SIDECAR_TMP_DIRECTORY_DEFAULT_VOLUME_NAME, templatePod));
+        if (!unidirectionalTopicOperator) {
+            volumeList.add(VolumeUtils.createTempDirVolume(TLS_SIDECAR_TMP_DIRECTORY_DEFAULT_VOLUME_NAME, templatePod));
+        }
         volumeList.add(VolumeUtils.createSecretVolume(TLS_SIDECAR_CA_CERTS_VOLUME_NAME, AbstractModel.clusterCaCertSecretName(cluster), isOpenShift));
         return volumeList;
     }
@@ -297,7 +329,7 @@ public class EntityOperator extends AbstractModel {
 
         try (BufferedReader br = new BufferedReader(
                 new InputStreamReader(
-                    Main.class.getResourceAsStream("/cluster-roles/031-ClusterRole-strimzi-entity-operator.yaml"),
+                    EntityOperator.class.getResourceAsStream("/cluster-roles/031-ClusterRole-strimzi-entity-operator.yaml"),
                     StandardCharsets.UTF_8)
             )
         ) {
@@ -318,5 +350,34 @@ public class EntityOperator extends AbstractModel {
         }
 
         return role;
+    }
+
+    /**
+     * Generates the NetworkPolicies relevant for Entity Operator
+     *
+     * @return The network policy.
+     */
+    public NetworkPolicy generateNetworkPolicy() {
+        // List of network policy rules for all ports
+        List<NetworkPolicyIngressRule> rules = new ArrayList<>();
+
+        // For Topic Operator
+        if (topicOperator != null) {
+            rules.add(NetworkPolicyUtils.createIngressRule(EntityTopicOperator.HEALTHCHECK_PORT, List.of()));
+        }
+
+        // For User Operator
+        if (userOperator != null) {
+            rules.add(NetworkPolicyUtils.createIngressRule(EntityUserOperator.HEALTHCHECK_PORT, List.of()));
+        }
+
+        // Build the final network policy with all rules covering all the ports
+        return NetworkPolicyUtils.createNetworkPolicy(
+                componentName,
+                namespace,
+                labels,
+                ownerReference,
+                rules
+        );
     }
 }

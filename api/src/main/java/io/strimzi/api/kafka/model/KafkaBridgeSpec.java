@@ -29,7 +29,7 @@ import lombok.EqualsAndHashCode;
     "producer", "resources", "jvmOptions", "logging", "clientRackInitImage", "rack",
     "enableMetrics", "livenessProbe", "readinessProbe", "template", "tracing"})
 @EqualsAndHashCode
-public class KafkaBridgeSpec extends Spec implements HasConfigurableLogging {
+public class KafkaBridgeSpec extends Spec implements HasConfigurableLogging, HasLivenessProbe, HasReadinessProbe {
     private static final long serialVersionUID = 1L;
     private static final int DEFAULT_REPLICAS = 1;
 
@@ -54,7 +54,8 @@ public class KafkaBridgeSpec extends Spec implements HasConfigurableLogging {
     private String clientRackInitImage;
     private Rack rack;
 
-    @Description("The number of pods in the `Deployment`.")
+    @Description("The number of pods in the `Deployment`.  " +
+            "Defaults to `1`.")
     @Minimum(0)
     @JsonProperty(defaultValue = "1")
     public int getReplicas() {

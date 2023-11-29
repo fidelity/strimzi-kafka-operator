@@ -10,12 +10,11 @@ import io.fabric8.kubernetes.api.model.rbac.RoleBinding;
 import io.strimzi.api.kafka.model.Kafka;
 import io.strimzi.api.kafka.model.KafkaResources;
 import io.strimzi.operator.cluster.ClusterOperatorConfig;
-import io.strimzi.operator.cluster.model.Ca;
+import io.strimzi.operator.common.model.Ca;
 import io.strimzi.operator.cluster.model.ClusterCa;
 import io.strimzi.operator.cluster.model.EntityOperator;
 import io.strimzi.operator.cluster.model.ImagePullPolicy;
 import io.strimzi.operator.cluster.model.KafkaVersion;
-import io.strimzi.operator.cluster.model.MetricsAndLoggingUtils;
 import io.strimzi.operator.cluster.model.ModelUtils;
 import io.strimzi.operator.cluster.operator.resource.ResourceOperatorSupplier;
 import io.strimzi.operator.common.Annotations;
@@ -29,7 +28,7 @@ import io.strimzi.operator.common.operator.resource.RoleBindingOperator;
 import io.strimzi.operator.common.operator.resource.RoleOperator;
 import io.strimzi.operator.common.operator.resource.SecretOperator;
 import io.strimzi.operator.common.operator.resource.ServiceAccountOperator;
-import io.vertx.core.CompositeFuture;
+import io.strimzi.operator.common.operator.resource.NetworkPolicyOperator;
 import io.vertx.core.Future;
 
 import java.time.Clock;
@@ -51,10 +50,12 @@ public class EntityOperatorReconciler {
     private final DeploymentOperator deploymentOperator;
     private final SecretOperator secretOperator;
     private final ServiceAccountOperator serviceAccountOperator;
+    private final boolean isNetworkPolicyGeneration;
     private final RoleOperator roleOperator;
     private final RoleBindingOperator roleBindingOperator;
     private final ConfigMapOperator configMapOperator;
-
+    private final NetworkPolicyOperator networkPolicyOperator;
+    private final boolean unidirectionalTopicOperator;
     private boolean existingEntityTopicOperatorCertsChanged = false;
     private boolean existingEntityUserOperatorCertsChanged = false;
 
@@ -78,9 +79,12 @@ public class EntityOperatorReconciler {
     ) {
         this.reconciliation = reconciliation;
         this.operationTimeoutMs = config.getOperationTimeoutMs();
-        this.entityOperator = EntityOperator.fromCrd(reconciliation, kafkaAssembly, versions, config.featureGates().useKRaftEnabled());
+        this.entityOperator = EntityOperator.fromCrd(reconciliation, kafkaAssembly, versions, supplier.sharedEnvironmentProvider,
+                config.featureGates().unidirectionalTopicOperatorEnabled());
         this.clusterCa = clusterCa;
         this.maintenanceWindows = kafkaAssembly.getSpec().getMaintenanceTimeWindows();
+        this.isNetworkPolicyGeneration = config.isNetworkPolicyGeneration();
+        this.unidirectionalTopicOperator = config.featureGates().unidirectionalTopicOperatorEnabled();
 
         this.deploymentOperator = supplier.deploymentOperations;
         this.secretOperator = supplier.secretOperations;
@@ -88,6 +92,7 @@ public class EntityOperatorReconciler {
         this.roleOperator = supplier.roleOperations;
         this.roleBindingOperator = supplier.roleBindingOperations;
         this.configMapOperator = supplier.configMapOperations;
+        this.networkPolicyOperator = supplier.networkPolicyOperator;
     }
 
     /**
@@ -107,9 +112,10 @@ public class EntityOperatorReconciler {
                 .compose(i -> entityOperatorRole())
                 .compose(i -> topicOperatorRole())
                 .compose(i -> userOperatorRole())
+                .compose(i -> networkPolicy())
                 .compose(i -> topicOperatorRoleBindings())
                 .compose(i -> userOperatorRoleBindings())
-                .compose(i -> topicOperagorConfigMap())
+                .compose(i -> topicOperatorConfigMap())
                 .compose(i -> userOperatorConfigMap())
                 .compose(i -> deleteOldEntityOperatorSecret())
                 .compose(i -> topicOperatorSecret(clock))
@@ -224,7 +230,7 @@ public class EntityOperatorReconciler {
             Future<ReconcileResult<RoleBinding>> ownNamespaceFuture = roleBindingOperator.reconcile(reconciliation, reconciliation.namespace(),
                     KafkaResources.entityTopicOperatorRoleBinding(reconciliation.name()), entityOperator.topicOperator().generateRoleBindingForRole(reconciliation.namespace(), reconciliation.namespace()));
 
-            return CompositeFuture.join(ownNamespaceFuture, watchedNamespaceFuture)
+            return Future.join(ownNamespaceFuture, watchedNamespaceFuture)
                     .map((Void) null);
         } else {
             return roleBindingOperator
@@ -255,7 +261,7 @@ public class EntityOperatorReconciler {
             Future<ReconcileResult<RoleBinding>> ownNamespaceFuture = roleBindingOperator.reconcile(reconciliation, reconciliation.namespace(),
                     KafkaResources.entityUserOperatorRoleBinding(reconciliation.name()), entityOperator.userOperator().generateRoleBindingForRole(reconciliation.namespace(), reconciliation.namespace()));
 
-            return CompositeFuture.join(ownNamespaceFuture, watchedNamespaceFuture)
+            return Future.join(ownNamespaceFuture, watchedNamespaceFuture)
                     .map((Void) null);
         } else {
             return roleBindingOperator
@@ -270,7 +276,7 @@ public class EntityOperatorReconciler {
      *
      * @return  Future which completes when the reconciliation is done
      */
-    protected Future<Void> topicOperagorConfigMap() {
+    protected Future<Void> topicOperatorConfigMap() {
         if (entityOperator != null && entityOperator.topicOperator() != null) {
             return MetricsAndLoggingUtils.metricsAndLogging(reconciliation, configMapOperator, entityOperator.topicOperator().logging(), null)
                     .compose(logging ->
@@ -390,6 +396,24 @@ public class EntityOperatorReconciler {
                     .map((Void) null);
         }
     }
+    /**
+     * Manages the Entity Operator Network Policies.
+     *
+     * @return  Future which completes when the reconciliation is done
+     */
+    protected Future<Void> networkPolicy() {
+        if (isNetworkPolicyGeneration) {
+            return networkPolicyOperator
+                    .reconcile(
+                            reconciliation,
+                            reconciliation.namespace(),
+                            KafkaResources.entityOperatorDeploymentName(reconciliation.name()),
+                            entityOperator != null ? entityOperator.generateNetworkPolicy() : null
+                    ).map((Void) null);
+        } else {
+            return Future.succeededFuture();
+        }
+    }
 
     /**
      * Manages the Entity Operator Deployment.
@@ -401,6 +425,8 @@ public class EntityOperatorReconciler {
             Deployment deployment = entityOperator.generateDeployment(isOpenShift, imagePullPolicy, imagePullSecrets);
             int caCertGeneration = ModelUtils.caCertGeneration(clusterCa);
             Annotations.annotations(deployment.getSpec().getTemplate()).put(Ca.ANNO_STRIMZI_IO_CLUSTER_CA_CERT_GENERATION, String.valueOf(caCertGeneration));
+            int caKeyGeneration = ModelUtils.caKeyGeneration(clusterCa);
+            Annotations.annotations(deployment.getSpec().getTemplate()).put(Ca.ANNO_STRIMZI_IO_CLUSTER_CA_KEY_GENERATION, String.valueOf(caKeyGeneration));
 
             return deploymentOperator
                     .reconcile(reconciliation, reconciliation.namespace(), KafkaResources.entityOperatorDeploymentName(reconciliation.name()), deployment)

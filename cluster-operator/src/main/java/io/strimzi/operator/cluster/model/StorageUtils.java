@@ -8,6 +8,7 @@ import io.fabric8.kubernetes.api.model.Quantity;
 import io.strimzi.api.kafka.model.storage.JbodStorage;
 import io.strimzi.api.kafka.model.storage.PersistentClaimStorage;
 import io.strimzi.api.kafka.model.storage.Storage;
+import io.strimzi.operator.common.model.InvalidResourceException;
 
 /**
  * Shared methods for working with Storage - for example comparing volume sizes
@@ -16,7 +17,7 @@ public class StorageUtils {
     /**
      * Parse a K8S-style representation of a quantity of memory, such as {@code 512Mi}, into the equivalent number in
      * the specified units. For example, a memory value of "100Gb" and a unit value of "Mb" will return 100000. This
-     * handles values up to around 9Pi, than the long overflows. This should not cause issues in reality since it is
+     * handles values up to around 9Pi, then the long overflows. This should not cause issues in reality since it is
      * unlikely we will have broker with disks over petabyte of size.
      *
      * @param memory The String representation of the quantity of memory.
@@ -31,7 +32,7 @@ public class StorageUtils {
 
     /**
      * Parse a K8S-style representation of a disk size, such as {@code 100Gi}, into the equivalent number of millibytes
-     * represented as a long. This handles values up to around 9Pi, than the long overflows. This should not cause
+     * represented as a long. This handles values up to around 9Pi, then the long overflows. This should not cause
      * issues in reality since it is unlikely we will have broker with disks over petabyte of size.
      *
      * @param size The String representation of the volume size.
@@ -50,7 +51,7 @@ public class StorageUtils {
 
     /**
      * Parse a K8S-style representation of a disk size, such as {@code 100Gi}, into the equivalent number of millibytes
-     * represented as a long. This handles values up to around 9Pi, than the long overflows. This should not cause
+     * represented as a long. This handles values up to around 9Pi, then the long overflows. This should not cause
      * issues in reality since it is unlikely we will have broker with disks over petabyte of size.
      *
      * @param size The String representation of the volume size.
@@ -133,7 +134,6 @@ public class StorageUtils {
         return factor;
     }
 
-
     private static boolean isEphemeral(Storage storage) {
         return Storage.TYPE_EPHEMERAL.equals(storage.getType());
     }
@@ -160,25 +160,27 @@ public class StorageUtils {
 
     /**
      * Validates persistent storage
-     * If storage is of a persistent type, validations are made
-     * If storage is not of a persistent type, validation passes
+     * - If storage is of a persistent type, validations are made
+     * - If storage is not of a persistent type, validation passes
      *
      * @param storage   Persistent Storage configuration
+     * @param path      Path in the custom resource where the problem occurs
+     *
      * @throws InvalidResourceException if validations fails for any reason
      */
-    public static void validatePersistentStorage(Storage storage)   {
+    public static void validatePersistentStorage(Storage storage, String path)   {
         if (storage instanceof PersistentClaimStorage persistentClaimStorage) {
-            checkPersistentStorageSizeIsValid(persistentClaimStorage);
+            checkPersistentStorageSizeIsValid(persistentClaimStorage, path);
 
         } else if (storage instanceof JbodStorage jbodStorage)  {
 
-            if (jbodStorage.getVolumes().size() == 0)   {
-                throw new InvalidResourceException("JbodStorage needs to contain at least one volume!");
+            if (jbodStorage.getVolumes() == null || jbodStorage.getVolumes().size() == 0)   {
+                throw new InvalidResourceException("JbodStorage needs to contain at least one volume (" + path + ")");
             }
 
             for (Storage jbodVolume : jbodStorage.getVolumes()) {
                 if (jbodVolume instanceof PersistentClaimStorage persistentClaimStorage) {
-                    checkPersistentStorageSizeIsValid(persistentClaimStorage);
+                    checkPersistentStorageSizeIsValid(persistentClaimStorage, path);
                 }
             }
         }
@@ -188,12 +190,13 @@ public class StorageUtils {
      * Checks if the supplied PersistentClaimStorage has a valid size
      *
      * @param storage   PersistentClaimStorage configuration
+     * @param path      Path in the custom resource where the problem occurs
      *
      * @throws InvalidResourceException if the persistent storage size is not valid
      */
-    private static void checkPersistentStorageSizeIsValid(PersistentClaimStorage storage)   {
+    private static void checkPersistentStorageSizeIsValid(PersistentClaimStorage storage, String path)   {
         if (storage.getSize() == null || storage.getSize().isEmpty()) {
-            throw new InvalidResourceException("The size is mandatory for a persistent-claim storage");
+            throw new InvalidResourceException("The size is mandatory for a persistent-claim storage (" + path + ")");
         }
     }
 }

@@ -5,12 +5,11 @@
 package io.strimzi.systemtest.utils.specific;
 
 import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
-import io.strimzi.api.kafka.model.KafkaResources;
 import io.strimzi.api.kafka.model.KafkaTopic;
-import io.strimzi.operator.cluster.operator.resource.cruisecontrol.CruiseControlConfigurationParameters;
-import io.strimzi.operator.cluster.operator.resource.cruisecontrol.CruiseControlEndpoints;
-import io.strimzi.systemtest.Constants;
-import io.strimzi.systemtest.Environment;
+import io.strimzi.operator.common.model.cruisecontrol.CruiseControlConfigurationParameters;
+import io.strimzi.operator.common.model.cruisecontrol.CruiseControlEndpoints;
+import io.strimzi.systemtest.TestConstants;
+import io.strimzi.systemtest.resources.crd.KafkaResource;
 import io.strimzi.systemtest.resources.crd.KafkaTopicResource;
 import io.strimzi.systemtest.utils.kubeUtils.objects.PodUtils;
 import io.strimzi.test.TestUtils;
@@ -84,8 +83,8 @@ public class CruiseControlUtils {
     @SuppressWarnings("BooleanExpressionComplexity")
     public static void verifyCruiseControlMetricReporterConfigurationInKafkaConfigMapIsPresent(Properties kafkaProperties) {
         String kafkaClusterName = kafkaProperties.getProperty("cluster-name");
-        TestUtils.waitFor("Verify that kafka configuration " + kafkaProperties.toString() + " has correct cruise control metric reporter properties",
-            Constants.GLOBAL_POLL_INTERVAL, Constants.GLOBAL_CRUISE_CONTROL_TIMEOUT, () ->
+        TestUtils.waitFor("Verify that Kafka configuration " + kafkaProperties.toString() + " has correct CruiseControl metric reporter properties",
+            TestConstants.GLOBAL_POLL_INTERVAL, TestConstants.GLOBAL_CRUISE_CONTROL_TIMEOUT, () ->
             kafkaProperties.getProperty(CruiseControlConfigurationParameters.METRICS_TOPIC_NAME.getValue()).equals("strimzi.cruisecontrol.metrics") &&
             kafkaProperties.getProperty(CruiseControlConfigurationParameters.METRICS_REPORTER_SSL_ENDPOINT_ID_ALGO.getValue()).equals("HTTPS") &&
             kafkaProperties.getProperty(CruiseControlConfigurationParameters.METRICS_REPORTER_BOOTSTRAP_SERVERS.getValue()).equals(kafkaClusterName + "-kafka-brokers:9091") &&
@@ -102,8 +101,8 @@ public class CruiseControlUtils {
         final int numberOfPartitionsSamplesTopic = 32;
         final int numberOfReplicasSamplesTopic = 2;
 
-        TestUtils.waitFor("Verify that kafka contains cruise control topics with related configuration.",
-            Constants.GLOBAL_POLL_INTERVAL, timeout, () -> {
+        TestUtils.waitFor("Verify that Kafka contains CruiseControl Topics with related configuration.",
+            TestConstants.GLOBAL_POLL_INTERVAL, timeout, () -> {
                 KafkaTopic modelTrainingSamples = KafkaTopicResource.kafkaTopicClient().inNamespace(namespaceName).withName(CRUISE_CONTROL_MODEL_TRAINING_SAMPLES_TOPIC).get();
                 KafkaTopic partitionsMetricsSamples = KafkaTopicResource.kafkaTopicClient().inNamespace(namespaceName).withName(CRUISE_CONTROL_PARTITION_METRICS_SAMPLES_TOPIC).get();
 
@@ -118,7 +117,7 @@ public class CruiseControlUtils {
 
                     return hasTopicCorrectPartitionsCount && hasTopicCorrectReplicasCount;
                 }
-                LOGGER.debug("One of the samples {}, {} topics are not present", CRUISE_CONTROL_MODEL_TRAINING_SAMPLES_TOPIC, CRUISE_CONTROL_PARTITION_METRICS_SAMPLES_TOPIC);
+                LOGGER.debug("One of the samples {}, {} Topics are not present", CRUISE_CONTROL_MODEL_TRAINING_SAMPLES_TOPIC, CRUISE_CONTROL_PARTITION_METRICS_SAMPLES_TOPIC);
                 return false;
             });
     }
@@ -127,8 +126,8 @@ public class CruiseControlUtils {
         final int numberOfPartitionsMetricTopic = 1;
         final int numberOfReplicasMetricTopic = 3;
 
-        TestUtils.waitFor("Verify that kafka contains cruise control topics with related configuration.",
-            Constants.GLOBAL_POLL_INTERVAL, timeout, () -> {
+        TestUtils.waitFor("Verify that Kafka contains CruiseControl topics with related configuration.",
+            TestConstants.GLOBAL_POLL_INTERVAL, timeout, () -> {
                 KafkaTopic metrics = KafkaTopicResource.kafkaTopicClient().inNamespace(namespaceName).withName(CRUISE_CONTROL_METRICS_TOPIC).get();
 
                 boolean hasTopicCorrectPartitionsCount =
@@ -142,17 +141,12 @@ public class CruiseControlUtils {
     }
 
     public static void verifyThatCruiseControlTopicsArePresent(String namespaceName) {
-        verifyThatKafkaCruiseControlMetricReporterTopicIsPresent(namespaceName, Constants.GLOBAL_CRUISE_CONTROL_TIMEOUT);
-        verifyThatCruiseControlSamplesTopicsArePresent(namespaceName, Constants.GLOBAL_CRUISE_CONTROL_TIMEOUT);
+        verifyThatKafkaCruiseControlMetricReporterTopicIsPresent(namespaceName, TestConstants.GLOBAL_CRUISE_CONTROL_TIMEOUT);
+        verifyThatCruiseControlSamplesTopicsArePresent(namespaceName, TestConstants.GLOBAL_CRUISE_CONTROL_TIMEOUT);
     }
 
     public static Properties getKafkaCruiseControlMetricsReporterConfiguration(String namespaceName, String clusterName) throws IOException {
-        String cmName;
-        if (Environment.isStrimziPodSetEnabled())   {
-            cmName = KafkaResources.kafkaPodName(clusterName, 0);
-        } else {
-            cmName = KafkaResources.kafkaMetricsAndLogConfigMapName(clusterName);
-        }
+        String cmName = KafkaResource.getKafkaPodName(clusterName, 0);
 
         InputStream configurationFileStream = new ByteArrayInputStream(kubeClient(namespaceName).getConfigMap(namespaceName, cmName)
                 .getData().get("server.config").getBytes(StandardCharsets.UTF_8));
@@ -173,10 +167,10 @@ public class CruiseControlUtils {
     }
 
     public static void waitForRebalanceEndpointIsReady(String namespaceName) {
-        TestUtils.waitFor("Wait for rebalance endpoint is ready",
-            Constants.API_CRUISE_CONTROL_POLL, Constants.API_CRUISE_CONTROL_TIMEOUT, () -> {
+        TestUtils.waitFor("rebalance endpoint to be ready",
+            TestConstants.API_CRUISE_CONTROL_POLL, TestConstants.API_CRUISE_CONTROL_TIMEOUT, () -> {
                 String response = callApi(namespaceName, SupportedHttpMethods.POST, CruiseControlEndpoints.REBALANCE, SupportedSchemes.HTTPS, true);
-                LOGGER.debug("API response {}", response);
+                LOGGER.debug("API response: {}", response);
                 return !response.contains("Error processing POST request '/rebalance' due to: " +
                     "'com.linkedin.kafka.cruisecontrol.exception.KafkaCruiseControlException: " +
                     "com.linkedin.cruisecontrol.exception.NotEnoughValidWindowsException: ");

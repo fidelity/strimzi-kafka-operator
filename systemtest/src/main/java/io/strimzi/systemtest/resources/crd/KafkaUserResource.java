@@ -31,7 +31,7 @@ public class KafkaUserResource implements ResourceType<KafkaUser> {
     }
     @Override
     public void create(KafkaUser resource) {
-        kafkaUserClient().inNamespace(resource.getMetadata().getNamespace()).resource(resource).createOrReplace();
+        kafkaUserClient().inNamespace(resource.getMetadata().getNamespace()).resource(resource).create();
     }
 
     @Override
@@ -46,6 +46,11 @@ public class KafkaUserResource implements ResourceType<KafkaUser> {
 
     public static MixedOperation<KafkaUser, KafkaUserList, Resource<KafkaUser>> kafkaUserClient() {
         return Crds.kafkaUserOperation(ResourceManager.kubeClient().getClient());
+    }
+
+    @Override
+    public void update(KafkaUser kafkaUser) {
+        kafkaUserClient().inNamespace(kafkaUser.getMetadata().getNamespace()).resource(kafkaUser).update();
     }
 
     public static void replaceUserResourceInSpecificNamespace(String resourceName, Consumer<KafkaUser> editor, String namespaceName) {

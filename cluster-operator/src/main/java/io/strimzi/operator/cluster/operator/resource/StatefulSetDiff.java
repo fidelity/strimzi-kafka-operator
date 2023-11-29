@@ -8,11 +8,12 @@ import com.fasterxml.jackson.databind.JsonNode;
 import io.fabric8.kubernetes.api.model.ObjectMeta;
 import io.fabric8.kubernetes.api.model.apps.StatefulSet;
 import io.fabric8.zjsonpatch.JsonDiff;
+import io.strimzi.operator.cluster.model.Quantities;
 import io.strimzi.operator.cluster.model.StorageUtils;
 import io.strimzi.operator.common.Annotations;
 import io.strimzi.operator.common.Reconciliation;
 import io.strimzi.operator.common.ReconciliationLogger;
-import io.strimzi.operator.common.operator.resource.AbstractJsonDiff;
+import io.strimzi.operator.common.model.AbstractJsonDiff;
 
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
@@ -152,14 +153,10 @@ public class StatefulSetDiff extends AbstractJsonDiff {
             && !t.isMissingNode()) {
             if ("cpu".equals(group)) {
                 // Ignore single millicpu differences as they could be due to rounding error
-                if (Math.abs(Quantities.parseCpuAsMilliCpus(s.asText()) - Quantities.parseCpuAsMilliCpus(t.asText())) < 1) {
-                    return true;
-                }
+                return Math.abs(Quantities.parseCpuAsMilliCpus(s.asText()) - Quantities.parseCpuAsMilliCpus(t.asText())) < 1;
             } else {
                 // Ignore single byte differences as they could be due to rounding error
-                if (Math.abs(Quantities.parseMemory(s.asText()) - Quantities.parseMemory(t.asText())) < 1) {
-                    return true;
-                }
+                return Math.abs(Quantities.parseMemory(s.asText()) - Quantities.parseMemory(t.asText())) < 1;
             }
         }
         return false;

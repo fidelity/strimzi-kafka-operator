@@ -4,7 +4,7 @@
     <parent>
         <groupId>io.strimzi</groupId>
         <artifactId>strimzi</artifactId>
-        <version>0.35.0-SNAPSHOT</version>
+        <version>0.39.0-SNAPSHOT</version>
     </parent>
     <modelVersion>4.0.0</modelVersion>
     <artifactId>api</artifactId>
@@ -22,12 +22,20 @@
 
         <!-- No Javadocs warnings as errors here => we do not want to fail because of warnings -->
         <javadoc.fail.on.warnings>false</javadoc.fail.on.warnings>
+
+        <!-- Points to the root directory of the Strimzi project directory and can be used for fixed location to configuration files -->
+        <strimziRootDirectory>${basedir}${file.separator}..</strimziRootDirectory>
     </properties>
 
     <dependencies>
         <dependency>
             <groupId>io.fabric8</groupId>
             <artifactId>kubernetes-client</artifactId>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
+            <groupId>io.fabric8</groupId>
+            <artifactId>openshift-client</artifactId>
             <scope>test</scope>
         </dependency>
         <dependency>
@@ -91,10 +99,6 @@
             <groupId>org.apache.logging.log4j</groupId>
             <artifactId>log4j-slf4j-impl</artifactId>
             <scope>test</scope>
-        </dependency>
-        <dependency>
-            <groupId>com.github.spotbugs</groupId>
-            <artifactId>spotbugs-annotations</artifactId>
         </dependency>
         <dependency>
             <groupId>io.strimzi</groupId>
@@ -192,6 +196,7 @@
                                 <argument>io.strimzi.api.kafka.model.KafkaMirrorMaker2=${project.basedir}${file.separator}..${file.separator}packaging${file.separator}install${file.separator}cluster-operator${file.separator}048-Crd-kafkamirrormaker2.yaml</argument>
                                 <argument>io.strimzi.api.kafka.model.KafkaRebalance=${project.basedir}${file.separator}..${file.separator}packaging${file.separator}install${file.separator}cluster-operator${file.separator}049-Crd-kafkarebalance.yaml</argument>
                                 <argument>io.strimzi.api.kafka.model.StrimziPodSet=${project.basedir}${file.separator}..${file.separator}packaging${file.separator}install${file.separator}cluster-operator${file.separator}042-Crd-strimzipodset.yaml</argument>
+                                <argument>io.strimzi.api.kafka.model.nodepool.KafkaNodePool=${project.basedir}${file.separator}..${file.separator}packaging${file.separator}install${file.separator}cluster-operator${file.separator}04A-Crd-kafkanodepool.yaml</argument>
                             </arguments>
                         </configuration>
                     </execution>
@@ -249,6 +254,8 @@
                                 <argument>io.strimzi.api.kafka.model.KafkaConnector</argument>
                                 <argument>io.strimzi.api.kafka.model.KafkaMirrorMaker2</argument>
                                 <argument>io.strimzi.api.kafka.model.KafkaRebalance</argument>
+                                <argument>io.strimzi.api.kafka.model.nodepool.KafkaNodePool</argument>
+                                <argument>io.strimzi.api.kafka.model.StrimziPodSet</argument>
                             </arguments>
                             <workingDirectory>${project.basedir}${file.separator}..${file.separator}documentation</workingDirectory>
                         </configuration>

@@ -1,11 +1,17 @@
 // Module included in the following assemblies:
 //
-// assembly-kafka-entity-operator.adoc
+// ref-kafka-entity-operator.adoc
 
 [id='topic-operator-{context}']
-= Topic Operator configuration properties
+= Configuring the Topic Operator
 
-Topic Operator deployment can be configured using additional options inside the `topicOperator` object.
+[role="_abstract"]
+Use `topicOperator` properties in `Kafka.spec.entityOperator` to configure the Topic Operator.
+
+NOTE: If you are using the preview of unidirectional topic management, the following properties are not used and will be ignored: 
+`Kafka.spec.entityOperator.topicOperator.zookeeperSessionTimeoutSeconds` and `Kafka.spec.entityOperator.topicOperator.topicMetadataMaxAttempts`.
+For more information on unidirectional topic management, refer to xref:ref-operator-topic-{context}[].
+
 The following properties are supported:
 
 `watchedNamespace`::
@@ -28,15 +34,16 @@ Default `6`.
 
 `image`::
 The `image` property can be used to configure the container image which will be used.
-For more details about configuring custom container images, see xref:con-common-configuration-images-reference[].
+To learn more, refer to the information provided on link:{BookURLConfiguring}#con-common-configuration-images-reference[configuring the `image` property`^].
 
 `resources`::
 The `resources` property configures the amount of resources allocated to the Topic Operator.
-For more details about resource request and limit configuration, see xref:con-common-configuration-resources-reference[].
+You can specify requests and limits for `memory` and `cpu` resources. 
+The requests should be enough to ensure a stable performance of the operator.
 
 `logging`::
 The `logging` property configures the logging of the Topic Operator.
-For more details, see xref:property-topic-operator-logging-reference[].
+To learn more, refer to the information provided on link:{BookURLConfiguring}#property-topic-operator-logging-reference[Topic Operator logging^].
 
 .Example Topic Operator configuration
 [source,yaml,subs=attributes+]
@@ -55,5 +62,12 @@ spec:
     topicOperator:
       watchedNamespace: my-topic-namespace
       reconciliationIntervalSeconds: 60
+      resources:
+        requests:
+          cpu: "1"
+          memory: 500Mi
+        limits:
+          cpu: "1"
+          memory: 500Mi
     # ...
 ----

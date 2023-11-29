@@ -10,11 +10,15 @@ import io.strimzi.api.kafka.model.listener.arraylistener.GenericKafkaListener;
 import io.strimzi.api.kafka.model.listener.arraylistener.GenericKafkaListenerBuilder;
 import io.strimzi.api.kafka.model.listener.arraylistener.KafkaListenerType;
 import io.strimzi.systemtest.AbstractST;
-import io.strimzi.systemtest.Constants;
+import io.strimzi.systemtest.TestConstants;
+import io.strimzi.systemtest.Environment;
+import io.strimzi.systemtest.annotations.IPv6NotSupported;
 import io.strimzi.systemtest.enums.DefaultNetworkPolicy;
 import io.strimzi.systemtest.keycloak.KeycloakInstance;
 import io.strimzi.systemtest.resources.keycloak.SetupKeycloak;
 import io.strimzi.systemtest.templates.kubernetes.NetworkPolicyTemplates;
+import io.strimzi.systemtest.templates.specific.ScraperTemplates;
+import io.strimzi.systemtest.utils.StUtils;
 import io.strimzi.systemtest.utils.kubeUtils.controllers.JobUtils;
 import io.strimzi.systemtest.utils.kubeUtils.objects.SecretUtils;
 import io.strimzi.test.logs.CollectorElement;
@@ -31,14 +35,17 @@ import java.util.stream.Collectors;
 import java.util.HashMap;
 import java.util.Map;
 
-import static io.strimzi.systemtest.Constants.OAUTH;
-import static io.strimzi.systemtest.Constants.REGRESSION;
+import static io.strimzi.systemtest.TestConstants.ARM64_UNSUPPORTED;
+import static io.strimzi.systemtest.TestConstants.OAUTH;
+import static io.strimzi.systemtest.TestConstants.REGRESSION;
 
 import static io.strimzi.test.k8s.KubeClusterResource.kubeClient;
 import static org.hamcrest.MatcherAssert.assertThat;
 
 @Tag(OAUTH)
 @Tag(REGRESSION)
+@Tag(ARM64_UNSUPPORTED)
+@IPv6NotSupported("Keycloak does not support IPv6 single-stack - https://github.com/keycloak/keycloak/issues/21277")
 public class OauthAbstractST extends AbstractST {
 
     protected static final Logger LOGGER = LogManager.getLogger(OauthAbstractST.class);
@@ -101,7 +108,7 @@ public class OauthAbstractST extends AbstractST {
 
     protected static final Function<KeycloakInstance, GenericKafkaListener> BUILD_OAUTH_TLS_LISTENER = (keycloakInstance) -> {
         return new GenericKafkaListenerBuilder()
-            .withName(Constants.TLS_LISTENER_DEFAULT_NAME)
+            .withName(TestConstants.TLS_LISTENER_DEFAULT_NAME)
             .withPort(9093)
             .withType(KafkaListenerType.INTERNAL)
             .withTls(true)
@@ -121,25 +128,27 @@ public class OauthAbstractST extends AbstractST {
             .build();
     };
 
-    protected void setupCoAndKeycloak(ExtensionContext extensionContext, String namespace) {
-        clusterOperator.unInstall();
-        clusterOperator.defaultInstallation().createInstallation().runInstallation();
+    protected void setupCoAndKeycloak(ExtensionContext extensionContext, String keycloakNamespace) {
+        clusterOperator.defaultInstallation(extensionContext).createInstallation().runInstallation();
 
-        resourceManager.createResource(extensionContext, NetworkPolicyTemplates.applyDefaultNetworkPolicy(extensionContext, namespace, DefaultNetworkPolicy.DEFAULT_TO_ALLOW));
+        resourceManager.createResourceWithWait(extensionContext, NetworkPolicyTemplates.applyDefaultNetworkPolicy(extensionContext, keycloakNamespace, DefaultNetworkPolicy.DEFAULT_TO_ALLOW));
+        resourceManager.createResourceWithoutWait(extensionContext, ScraperTemplates.scraperPod(Environment.TEST_SUITE_NAMESPACE, TestConstants.SCRAPER_NAME).build());
 
-        LOGGER.info("Deploying keycloak...");
+        LOGGER.info("Deploying keycloak");
 
         // this is need for cluster-wide OLM (creating `infra-namespace` for Keycloak)
-        // Keycloak do not support cluster-wide namespace and thus we need it to deploy in non-OLM cluster wide namespace
+        // Keycloak do not support cluster-wide namespace, and thus we need it to deploy in non-OLM cluster wide namespace
         // (f.e., our `infra-namespace`)
-        if (kubeClient().getNamespace(clusterOperator.getDeploymentNamespace()) == null) {
-            cluster.createNamespace(CollectorElement.createCollectorElement(extensionContext.getRequiredTestClass().getName()), clusterOperator.getDeploymentNamespace());
+        if (kubeClient().getNamespace(Environment.TEST_SUITE_NAMESPACE) == null) {
+            cluster.createNamespace(CollectorElement.createCollectorElement(extensionContext.getRequiredTestClass().getName()), Environment.TEST_SUITE_NAMESPACE);
+            StUtils.copyImagePullSecrets(Environment.TEST_SUITE_NAMESPACE);
         }
 
-        SetupKeycloak.deployKeycloakOperator(extensionContext, clusterOperator.getDeploymentNamespace(), namespace);
-        keycloakInstance = SetupKeycloak.deployKeycloakAndImportRealms(extensionContext, namespace);
+        SetupKeycloak.deployKeycloakOperator(extensionContext, Environment.TEST_SUITE_NAMESPACE, keycloakNamespace);
 
-        createSecretsForDeployments(namespace);
+        keycloakInstance = SetupKeycloak.deployKeycloakAndImportRealms(extensionContext, keycloakNamespace);
+
+        createSecretsForDeployments(keycloakNamespace);
     }
 
     @AfterEach
@@ -147,11 +156,11 @@ public class OauthAbstractST extends AbstractST {
         List<Job> clusterJobList = kubeClient().getJobList().getItems()
             .stream()
             .filter(
-                job -> job.getMetadata().getName().contains(mapWithClusterNames.get(extensionContext.getDisplayName())))
+                job -> job.getMetadata().getName().contains(storageMap.get(extensionContext).getClusterName()))
             .collect(Collectors.toList());
 
         for (Job job : clusterJobList) {
-            LOGGER.info("Deleting {} job", job.getMetadata().getName());
+            LOGGER.info("Deleting Job: {}/{} ", job.getMetadata().getNamespace(), job.getMetadata().getName());
             JobUtils.deleteJobWithWait(job.getMetadata().getNamespace(), job.getMetadata().getName());
         }
     }

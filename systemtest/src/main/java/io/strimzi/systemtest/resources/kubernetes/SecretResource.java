@@ -5,7 +5,7 @@
 package io.strimzi.systemtest.resources.kubernetes;
 
 import io.fabric8.kubernetes.api.model.Secret;
-import io.strimzi.systemtest.Constants;
+import io.strimzi.systemtest.TestConstants;
 import io.strimzi.systemtest.resources.ResourceManager;
 import io.strimzi.systemtest.resources.ResourceType;
 
@@ -13,7 +13,7 @@ public class SecretResource implements ResourceType<Secret> {
 
     @Override
     public String getKind() {
-        return Constants.SECRET;
+        return TestConstants.SECRET;
     }
 
     @Override
@@ -29,6 +29,11 @@ public class SecretResource implements ResourceType<Secret> {
     @Override
     public void delete(Secret resource) {
         ResourceManager.kubeClient().namespace(resource.getMetadata().getNamespace()).deleteSecret(resource.getMetadata().getName());
+    }
+
+    @Override
+    public void update(Secret resource) {
+        ResourceManager.kubeClient().namespace(resource.getMetadata().getNamespace()).updateSecret(resource);
     }
 
     @Override

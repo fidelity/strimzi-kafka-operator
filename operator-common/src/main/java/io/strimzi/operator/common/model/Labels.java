@@ -5,6 +5,7 @@
 package io.strimzi.operator.common.model;
 
 import io.fabric8.kubernetes.api.model.HasMetadata;
+import io.strimzi.api.ResourceLabels;
 
 import java.util.ArrayList;
 import java.util.HashMap;
@@ -21,49 +22,12 @@ import static java.util.Collections.unmodifiableMap;
 /**
  * An immutable set of labels
  */
-public class Labels {
-    /**
-     * Strimzi domain used for the Strimzi labels
-     */
-    public static final String STRIMZI_DOMAIN = "strimzi.io/";
+public class Labels extends ResourceLabels {
 
     /**
      * Kubernetes domain used for Kubernetes labels
      */
     public static final String KUBERNETES_DOMAIN = "app.kubernetes.io/";
-
-    /**
-     * The kind of a Kubernetes / OpenShift Resource. It contains the same value as the Kind of the corresponding
-     * Custom Resource. It should have on of the following values:
-     *
-     * <ul>
-     *   <li>Kafka</li>
-     *   <li>KafkaConnect</li>
-     *   <li>KafkaMirrorMaker</li>
-     *   <li>KafkaBridge</li>
-     *   <li>KafkaUser</li>
-     *   <li>KafkaTopic</li>
-     * </ul>
-     */
-    public static final String STRIMZI_KIND_LABEL = STRIMZI_DOMAIN + "kind";
-
-    /**
-     * The Strimzi cluster the resource is part of. This is typically the name of the custom resource.
-     */
-    public static final String STRIMZI_CLUSTER_LABEL = STRIMZI_DOMAIN + "cluster";
-
-    /**
-     * Type of the Strimzi component to which given resource belongs. E.g. Kafka or ZooKeeper. This label does not
-     * depend on the name of the cluster. This is useful to identify resources which belong to the same component but
-     * different clusters which is useful for example for scheduling (e.g. when you do not want this broker to be
-     * scheduled on a node where any other Kafka broker is running).
-     */
-    public static final String STRIMZI_COMPONENT_TYPE_LABEL = STRIMZI_DOMAIN + "component-type";
-
-    /**
-     * Name of the component to which given resource belongs. This typically consists of the cluster name and component.
-     */
-    public static final String STRIMZI_NAME_LABEL = STRIMZI_DOMAIN + "name";
 
     /**
      * Identifies Pods managed directly by Strimzi and resources belonging directly to them such as per-node services,
@@ -81,6 +45,21 @@ public class Labels {
      * Indicates the name of the controller
      */
     public static final String STRIMZI_CONTROLLER_NAME_LABEL = STRIMZI_DOMAIN + "controller-name";
+
+    /**
+     * Indicates the name of the pool
+     */
+    public static final String STRIMZI_POOL_NAME_LABEL = STRIMZI_DOMAIN + "pool-name";
+
+    /**
+     * Indicates the role of the node => in this case the broker role
+     */
+    public static final String STRIMZI_BROKER_ROLE_LABEL = STRIMZI_DOMAIN + "broker-role";
+
+    /**
+     * Indicates the role of the node => in this case the controller role
+     */
+    public static final String STRIMZI_CONTROLLER_ROLE_LABEL = STRIMZI_DOMAIN + "controller-role";
 
     /**
      * The name of the label used for Strimzi discovery.
@@ -149,7 +128,7 @@ public class Labels {
                     .keySet()
                     .stream()
                     .filter(key -> key.startsWith(Labels.STRIMZI_DOMAIN) && !key.startsWith(Labels.STRIMZI_CLUSTER_LABEL))
-                    .collect(Collectors.toList());
+                    .toList();
             if (invalidLabels.size() > 0) {
                 throw new IllegalArgumentException("Labels starting with " + STRIMZI_DOMAIN + " are not allowed in Custom Resources, such labels should be removed.");
             }
@@ -298,7 +277,7 @@ public class Labels {
      * This method is written to handle instance names which are valid resource names, since they are derived from a
      * custom resource. It does not modify arbitrary names as label values.
      *
-     * @param instance Theoriginal name of the instance
+     * @param instance The original name of the instance
      * @return Either the original instance name or a modified version to match label value criteria
      */
     /*test*/ static String getOrValidInstanceLabelValue(String instance) {
@@ -386,10 +365,43 @@ public class Labels {
      *
      * @param controllerName Name of the controlling StrimziPodSet
      *
-     * @return A new instance with the given pod name added.
+     * @return A new instance with the given controller name added.
      */
     public Labels withStrimziPodSetController(String controllerName) {
         return with(STRIMZI_CONTROLLER_LABEL, "strimzipodset").with(STRIMZI_CONTROLLER_NAME_LABEL, controllerName);
+    }
+
+    /**
+     * Sets the Strimzi pool name label
+     *
+     * @param poolName Name of the controlling KafkaNodePool
+     *
+     * @return A new instance with the given pool name added.
+     */
+    public Labels withStrimziPoolName(String poolName) {
+        return with(STRIMZI_POOL_NAME_LABEL, poolName);
+    }
+
+    /**
+     * Sets the Strimzi broker role label
+     *
+     * @param isBroker  Flag indicating whether this node has the broker role or not
+     *
+     * @return A new instance with the given broker role label added.
+     */
+    public Labels withStrimziBrokerRole(boolean isBroker) {
+        return with(STRIMZI_BROKER_ROLE_LABEL, isBroker ? "true" : "false");
+    }
+
+    /**
+     * Sets the Strimzi controller role label
+     *
+     * @param isController  Flag indicating whether this node has the controller role or not
+     *
+     * @return A new instance with the given controller role label added.
+     */
+    public Labels withStrimziControllerRole(boolean isController) {
+        return with(STRIMZI_CONTROLLER_ROLE_LABEL, isController ? "true" : "false");
     }
 
     /**
@@ -432,6 +444,7 @@ public class Labels {
         strimziSelectorLabels.add(STRIMZI_CLUSTER_LABEL);
         strimziSelectorLabels.add(STRIMZI_NAME_LABEL);
         strimziSelectorLabels.add(STRIMZI_KIND_LABEL);
+        strimziSelectorLabels.add(STRIMZI_POOL_NAME_LABEL);
 
         strimziSelectorLabels.forEach(key -> {
             if (labels.containsKey(key)) newLabels.put(key, labels.get(key));

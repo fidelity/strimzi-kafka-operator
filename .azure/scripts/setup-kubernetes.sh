@@ -3,7 +3,7 @@ set -xe
 
 rm -rf ~/.kube
 
-KUBE_VERSION=${KUBE_VERSION:-1.19.0}
+KUBE_VERSION=${KUBE_VERSION:-1.21.0}
 MINIKUBE_REGISTRY_IMAGE=${REGISTRY_IMAGE:-"registry"}
 COPY_DOCKER_LOGIN=${COPY_DOCKER_LOGIN:-"false"}
 
@@ -61,7 +61,7 @@ if [ "$TEST_CLUSTER" = "minikube" ]; then
     mkdir $HOME/.kube || true
     touch $HOME/.kube/config
 
-	docker run -d -p 5000:5000 ${MINIKUBE_REGISTRY_IMAGE}
+    docker run -d -p 5000:5000 ${MINIKUBE_REGISTRY_IMAGE}
 
     export KUBECONFIG=$HOME/.kube/config
     # We can turn on network polices support by adding the following options --network-plugin=cni --cni=calico
@@ -69,7 +69,7 @@ if [ "$TEST_CLUSTER" = "minikube" ]; then
     # We can allow NP after Strimzi#4092 which should fix some issues on STs side
     minikube start --vm-driver=docker --kubernetes-version=${KUBE_VERSION} \
       --insecure-registry=localhost:5000 --extra-config=apiserver.authorization-mode=Node,RBAC \
-      --cpus=${MINIKUBE_CPU} --memory=${MINIKUBE_MEMORY}
+      --cpus=${MINIKUBE_CPU} --memory=${MINIKUBE_MEMORY} --force
 
     if [ $? -ne 0 ]
     then
@@ -91,10 +91,23 @@ if [ "$TEST_CLUSTER" = "minikube" ]; then
 
     if [ "$ARCH" = "s390x" ]; then
         git clone -b v1.9.11 --depth 1 https://github.com/kubernetes/kubernetes.git
-        sed -i 's/:1.11//' kubernetes/cluster/addons/registry/images/Dockerfile
-        docker build --pull -t gcr.io/google_containers/kube-registry-proxy:0.4-s390x kubernetes/cluster/addons/registry/images/
-        minikube cache add s390x/registry:2.8.0-beta.1 gcr.io/google_containers/kube-registry-proxy:0.4-s390x
-        minikube addons enable registry --images="Registry=s390x/registry:2.8.0-beta.1,KubeRegistryProxy=google_containers/kube-registry-proxy:0.4-s390x"
+        sed -i 's/:1.11/:1.22.1/' kubernetes/cluster/addons/registry/images/Dockerfile
+        docker build --pull -t gcr.io/google_containers/kube-registry-proxy:0.4-${ARCH} kubernetes/cluster/addons/registry/images/
+        minikube image load ${ARCH}/registry:2.8.2 gcr.io/google_containers/kube-registry-proxy:0.4-${ARCH}
+        minikube addons enable registry --images="Registry=${ARCH}/registry:2.8.2,KubeRegistryProxy=google_containers/kube-registry-proxy:0.4-${ARCH}"
+        rm -rf kubernetes
+    elif [[ "$ARCH" = "ppc64le" ]]; then
+        git clone -b v1.9.11 --depth 1 https://github.com/kubernetes/kubernetes.git
+        sed -i 's/:1.11/:1.22.1/' kubernetes/cluster/addons/registry/images/Dockerfile
+        docker build --pull -t gcr.io/google_containers/kube-registry-proxy:0.4-${ARCH} kubernetes/cluster/addons/registry/images/
+        minikube image load ${ARCH}/registry:2.8.2 gcr.io/google_containers/kube-registry-proxy:0.4-${ARCH}
+        minikube addons enable registry --images="Registry=${ARCH}/registry:2.8.0-beta.1,KubeRegistryProxy=google_containers/kube-registry-proxy:0.4-${ARCH}"
+        rm -rf kubernetes
+    elif [[ "$ARCH" = "arm64" ]]; then
+        git clone -b v1.9.11 --depth 1 https://github.com/kubernetes/kubernetes.git
+        sed -i 's/:1.11/:1.25.0/' kubernetes/cluster/addons/registry/images/Dockerfile
+        minikube image build -t google_containers/kube-registry-proxy:0.5-SNAPSHOT kubernetes/cluster/addons/registry/images/
+        minikube addons enable registry --images="Registry=arm64v8/registry:2.8.2,KubeRegistryProxy=google_containers/kube-registry-proxy:0.5-SNAPSHOT"
         rm -rf kubernetes
     else
         minikube addons enable registry

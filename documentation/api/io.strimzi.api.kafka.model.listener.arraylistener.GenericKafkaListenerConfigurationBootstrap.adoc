@@ -1,7 +1,7 @@
 Broker service equivalents of `nodePort`, `host`, `loadBalancerIP` and `annotations` properties are configured in the xref:type-GenericKafkaListenerConfigurationBroker-reference[`GenericKafkaListenerConfigurationBroker` schema].
 
 [id='property-listener-config-altnames-{context}']
-=== `alternativeNames`
+= `alternativeNames`
 
 You can specify alternative names for the bootstrap service.
 The names are added to the broker certificates and can be used for TLS hostname verification.
@@ -12,7 +12,7 @@ The `alternativeNames` property is applicable to all types of listeners.
 ----
 listeners:
   #...
-  - name: external
+  - name: external1
     port: 9094
     type: route
     tls: true
@@ -27,7 +27,7 @@ listeners:
 ----
 
 [id='property-listener-config-host-{context}']
-=== `host`
+= `host`
 
 The `host` property is used with `route` and `ingress` listeners to specify the hostnames used by the bootstrap and per-broker services.
 
@@ -40,7 +40,7 @@ Strimzi will not perform any validation that the requested hosts are available a
 ----
 listeners:
   #...
-  - name: external
+  - name: external2
     port: 9094
     type: ingress
     tls: true
@@ -71,7 +71,7 @@ You must ensure that they are free and can be used.
 # ...
 listeners:
   #...
-  - name: external
+  - name: external1
     port: 9094
     type: route
     tls: true
@@ -91,7 +91,7 @@ listeners:
 ----
 
 [id='property-listener-config-nodeport-{context}']
-=== `nodePort`
+= `nodePort`
 
 By default, the port numbers used for the bootstrap and broker services are automatically assigned by Kubernetes.
 You can override the assigned node ports for `nodeport` listeners by specifying the requested port numbers.
@@ -105,7 +105,7 @@ You must ensure that they are free and available for use.
 # ...
 listeners:
   #...
-  - name: external
+  - name: external4
     port: 9094
     type: nodeport
     tls: true
@@ -125,7 +125,7 @@ listeners:
 ----
 
 [id='property-listener-config-lb-ip-{context}']
-=== `loadBalancerIP`
+= `loadBalancerIP`
 
 Use the `loadBalancerIP` property to request a specific IP address when creating a loadbalancer.
 Use this property when you need to use a loadbalancer with a specific IP address.
@@ -137,7 +137,7 @@ The `loadBalancerIP` field is ignored if the cloud provider does not support the
 # ...
 listeners:
   #...
-  - name: external
+  - name: external3
     port: 9094
     type: loadbalancer
     tls: true
@@ -157,7 +157,7 @@ listeners:
 ----
 
 [id='property-listener-config-annotations-{context}']
-=== `annotations`
+= `annotations`
 
 Use the `annotations` property to add annotations to Kubernetes resources related to the listeners.
 You can use these annotations, for example, to instrument DNS tooling such as {KubernetesExternalDNS}, which automatically assigns DNS names to the loadbalancer services.
@@ -168,7 +168,7 @@ You can use these annotations, for example, to instrument DNS tooling such as {K
 # ...
 listeners:
   #...
-  - name: external
+  - name: external3
     port: 9094
     type: loadbalancer
     tls: true

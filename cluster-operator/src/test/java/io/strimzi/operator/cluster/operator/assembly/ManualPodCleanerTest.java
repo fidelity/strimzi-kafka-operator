@@ -10,15 +10,12 @@ import io.fabric8.kubernetes.api.model.Pod;
 import io.fabric8.kubernetes.api.model.PodBuilder;
 import io.strimzi.api.kafka.model.StrimziPodSet;
 import io.strimzi.api.kafka.model.StrimziPodSetBuilder;
-import io.strimzi.operator.cluster.ClusterOperatorConfig;
-import io.strimzi.operator.cluster.KafkaVersionTestUtils;
 import io.strimzi.operator.cluster.ResourceUtils;
-import io.strimzi.operator.cluster.model.KafkaVersion;
 import io.strimzi.operator.cluster.model.PodSetUtils;
 import io.strimzi.operator.cluster.operator.resource.ResourceOperatorSupplier;
+import io.strimzi.operator.common.Annotations;
 import io.strimzi.operator.common.Reconciliation;
 import io.strimzi.operator.common.model.Labels;
-import io.strimzi.operator.common.operator.resource.AbstractScalableNamespacedResourceOperator;
 import io.strimzi.operator.common.operator.resource.PodOperator;
 import io.strimzi.operator.common.operator.resource.PvcOperator;
 import io.strimzi.operator.common.operator.resource.StrimziPodSetOperator;
@@ -46,13 +43,12 @@ import static org.mockito.Mockito.when;
 public class ManualPodCleanerTest {
     private final static String CONTROLLER_NAME = "controller";
     private final static Labels SELECTOR = Labels.fromString("selector=" + CONTROLLER_NAME);
-    private static final KafkaVersion.Lookup VERSIONS = KafkaVersionTestUtils.getKafkaVersionLookup();
 
     @Test
     public void testManualPodCleanupOnePodWithPodSets(VertxTestContext context) {
         List<Pod> pods = List.of(
                 podWithName(CONTROLLER_NAME + "-0"),
-                podWithNameAndAnnotations(CONTROLLER_NAME + "-1", Collections.singletonMap(AbstractScalableNamespacedResourceOperator.ANNO_STRIMZI_IO_DELETE_POD_AND_PVC, "true")),
+                podWithNameAndAnnotations(CONTROLLER_NAME + "-1", Collections.singletonMap(Annotations.ANNO_STRIMZI_IO_DELETE_POD_AND_PVC, "true")),
                 podWithName(CONTROLLER_NAME + "-2")
         );
 
@@ -69,7 +65,7 @@ public class ManualPodCleanerTest {
     public void testManualPodCleanupJbodWithPodSets(VertxTestContext context) {
         List<Pod> pods = List.of(
                 podWithName(CONTROLLER_NAME + "-0"),
-                podWithNameAndAnnotations(CONTROLLER_NAME + "-1", Collections.singletonMap(AbstractScalableNamespacedResourceOperator.ANNO_STRIMZI_IO_DELETE_POD_AND_PVC, "true")),
+                podWithNameAndAnnotations(CONTROLLER_NAME + "-1", Collections.singletonMap(Annotations.ANNO_STRIMZI_IO_DELETE_POD_AND_PVC, "true")),
                 podWithName(CONTROLLER_NAME + "-2")
         );
 
@@ -89,8 +85,8 @@ public class ManualPodCleanerTest {
     public void testManualPodCleanupMultiplePodsWithPodSets(VertxTestContext context) {
         List<Pod> pods = List.of(
                 podWithName(CONTROLLER_NAME + "-0"),
-                podWithNameAndAnnotations(CONTROLLER_NAME + "-1", Collections.singletonMap(AbstractScalableNamespacedResourceOperator.ANNO_STRIMZI_IO_DELETE_POD_AND_PVC, "true")),
-                podWithNameAndAnnotations(CONTROLLER_NAME + "-2", Collections.singletonMap(AbstractScalableNamespacedResourceOperator.ANNO_STRIMZI_IO_DELETE_POD_AND_PVC, "true"))
+                podWithNameAndAnnotations(CONTROLLER_NAME + "-1", Collections.singletonMap(Annotations.ANNO_STRIMZI_IO_DELETE_POD_AND_PVC, "true")),
+                podWithNameAndAnnotations(CONTROLLER_NAME + "-2", Collections.singletonMap(Annotations.ANNO_STRIMZI_IO_DELETE_POD_AND_PVC, "true"))
         );
 
         List<PersistentVolumeClaim> pvcs = List.of(
@@ -143,27 +139,20 @@ public class ManualPodCleanerTest {
         when(mockPvcOps.listAsync(any(), eq(SELECTOR))).thenReturn(Future.succeededFuture(pvcs));
         ArgumentCaptor<String> pvcDeletionCaptor = ArgumentCaptor.forClass(String.class);
         when(mockPvcOps.deleteAsync(any(), any(), pvcDeletionCaptor.capture(), anyBoolean())).thenReturn(Future.succeededFuture());
-        ArgumentCaptor<String> pvcReconciliationCaptor = ArgumentCaptor.forClass(String.class);
-        when(mockPvcOps.reconcile(any(), any(), pvcReconciliationCaptor.capture(), any())).thenReturn(Future.succeededFuture());
-
-        ClusterOperatorConfig config = ResourceUtils.dummyClusterOperatorConfig(VERSIONS);
 
         ManualPodCleaner cleaner = new ManualPodCleaner(
                 Reconciliation.DUMMY_RECONCILIATION,
-                CONTROLLER_NAME,
                 SELECTOR,
-                config,
                 supplier
         );
 
         Checkpoint async = context.checkpoint();
-        cleaner.maybeManualPodCleaning(pvcs)
+        cleaner.maybeManualPodCleaning()
                 .onComplete(context.succeeding(v -> context.verify(() -> {
                     if (podsToBeDeleted.size() > 0) {
-                        // PodSet was reconciled twice => once teo remove the deleted pod and once to add it back
-                        assertThat(podSetReconciliationCaptor.getAllValues().size(), is(2));
+                        // PodSet was reconciled to remove the pod from it
+                        assertThat(podSetReconciliationCaptor.getAllValues().size(), is(1));
                         assertThat(podSetReconciliationCaptor.getAllValues().get(0).getSpec().getPods().size(), is(2));
-                        assertThat(podSetReconciliationCaptor.getAllValues().get(1).getSpec().getPods().size(), is(3));
                     } else {
                         assertThat(podSetReconciliationCaptor.getAllValues().size(), is(0));
                     }
@@ -175,8 +164,6 @@ public class ManualPodCleanerTest {
                     // Verify the deleted and recreated pvc
                     assertThat(pvcDeletionCaptor.getAllValues().size(), is(pvcsToBeDeleted.size()));
                     assertThat(pvcDeletionCaptor.getAllValues(), is(pvcsToBeDeleted));
-                    assertThat(pvcReconciliationCaptor.getAllValues().size(), is(pvcsToBeDeleted.size()));
-                    assertThat(pvcReconciliationCaptor.getAllValues(), is(pvcsToBeDeleted));
 
                     async.flag();
                 })));

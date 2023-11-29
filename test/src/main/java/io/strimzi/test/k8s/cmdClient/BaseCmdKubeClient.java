@@ -220,7 +220,7 @@ public abstract class BaseCmdKubeClient<K extends BaseCmdKubeClient<K>> implemen
     @SuppressWarnings("unchecked")
     public K applyContent(String yamlContent) {
         try (Context context = defaultContext()) {
-            Exec.exec(yamlContent, namespacedCommand(APPLY, "-f", "-"), 0, Level.INFO);
+            Exec.exec(yamlContent, namespacedCommand(APPLY, "-f", "-"), 0, Level.DEBUG);
             return (K) this;
         }
     }
@@ -229,7 +229,7 @@ public abstract class BaseCmdKubeClient<K extends BaseCmdKubeClient<K>> implemen
     @SuppressWarnings("unchecked")
     public K createContent(String yamlContent) {
         try (Context context = defaultContext()) {
-            Exec.exec(yamlContent, namespacedCommand(CREATE, "-f", "-"), 0, Level.INFO);
+            Exec.exec(yamlContent, namespacedCommand(CREATE, "-f", "-"), 0, Level.DEBUG);
             return (K) this;
         }
     }
@@ -241,7 +241,7 @@ public abstract class BaseCmdKubeClient<K extends BaseCmdKubeClient<K>> implemen
             try {
                 createContent(yamlContent);
             } catch (KubeClusterException.AlreadyExists e) {
-                Exec.exec(yamlContent, namespacedCommand(REPLACE, "-f", "-"), 0, Level.INFO);
+                Exec.exec(yamlContent, namespacedCommand(REPLACE, "-f", "-"), 0, Level.DEBUG);
             }
 
             return (K) this;
@@ -252,7 +252,7 @@ public abstract class BaseCmdKubeClient<K extends BaseCmdKubeClient<K>> implemen
     @SuppressWarnings("unchecked")
     public K deleteContent(String yamlContent) {
         try (Context context = defaultContext()) {
-            Exec.exec(yamlContent, namespacedCommand(DELETE, "-f", "-"), 0, Level.INFO, false);
+            Exec.exec(yamlContent, namespacedCommand(DELETE, "-f", "-"), 0, Level.DEBUG, false);
             return (K) this;
         }
     }
@@ -290,10 +290,20 @@ public abstract class BaseCmdKubeClient<K extends BaseCmdKubeClient<K>> implemen
     }
 
     @Override
-    public ExecResult execInPod(Level logLeve, String pod, String... command) {
+    public ExecResult execInPod(String pod, boolean throwErrors, String... command) {
+        return execInPod(Level.INFO, pod, throwErrors, command);
+    }
+
+    @Override
+    public ExecResult execInPod(Level logLevel, String pod, String... command) {
+        return execInPod(Level.INFO, pod, true, command);
+    }
+
+    @Override
+    public ExecResult execInPod(Level logLevel, String pod, boolean throwErrors, String... command) {
         List<String> cmd = namespacedCommand("exec", pod, "--");
         cmd.addAll(asList(command));
-        return Exec.exec(null, cmd, 0, logLeve);
+        return Exec.exec(null, cmd, 0, logLevel, throwErrors);
     }
 
     @Override

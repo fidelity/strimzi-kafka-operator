@@ -20,10 +20,10 @@ import io.strimzi.api.kafka.model.KafkaUserTlsExternalClientAuthentication;
 import io.strimzi.certs.CertAndKey;
 import io.strimzi.certs.CertManager;
 import io.strimzi.certs.OpenSslCertManager;
-import io.strimzi.operator.cluster.model.Ca;
-import io.strimzi.operator.cluster.model.ClientsCa;
-import io.strimzi.operator.cluster.model.InvalidResourceException;
-import io.strimzi.operator.common.PasswordGenerator;
+import io.strimzi.operator.common.model.Ca;
+import io.strimzi.operator.common.model.ClientsCa;
+import io.strimzi.operator.common.model.InvalidResourceException;
+import io.strimzi.operator.common.model.PasswordGenerator;
 import io.strimzi.operator.common.Reconciliation;
 import io.strimzi.operator.common.ReconciliationLogger;
 import io.strimzi.operator.common.Util;
@@ -105,27 +105,19 @@ public class KafkaUserModel {
     /**
      * Creates instance of KafkaUserModel from CRD definition.
      *
-     * @param kafkaUser The Custom Resource based on which the model should be created.
-     * @param secretPrefix The prefix used to add to the name of the Secret generated from the KafkaUser resource.
-     * @param aclsAdminApiSupported Indicates whether Kafka Admin API can be used to manage ACL rights
-     * @param kraftEnabled Indicates whether KRaft is enabled in the Kafka cluster
+     * @param kafkaUser                 The Custom Resource based on which the model should be created.
+     * @param secretPrefix              The prefix used to add to the name of the Secret generated from the KafkaUser resource.
+     * @param aclsAdminApiSupported     Indicates whether Kafka Admin API can be used to manage ACL rights
      *
      * @return The user model.
      */
     public static KafkaUserModel fromCrd(KafkaUser kafkaUser,
                                          String secretPrefix,
-                                         boolean aclsAdminApiSupported,
-                                         boolean kraftEnabled) {
+                                         boolean aclsAdminApiSupported) {
         KafkaUserModel result = new KafkaUserModel(kafkaUser.getMetadata().getNamespace(),
                 kafkaUser.getMetadata().getName(),
                 Labels.fromResource(kafkaUser).withStrimziKind(kafkaUser.getKind()),
                 secretPrefix);
-
-        if (kafkaUser.getSpec().getAuthentication() != null && kafkaUser.getSpec().getAuthentication().getType().equals(KafkaUserScramSha512ClientAuthentication.TYPE_SCRAM_SHA_512)) {
-            if (kraftEnabled) {
-                throw new InvalidResourceException("SCRAM-SHA-512 authentication is currently not supported in KRaft based Kafka clusters.");
-            }
-        }
 
         validateTlsUsername(kafkaUser);
         validateDesiredPassword(kafkaUser);

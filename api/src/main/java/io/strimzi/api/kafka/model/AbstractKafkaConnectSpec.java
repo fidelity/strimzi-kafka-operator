@@ -26,11 +26,11 @@ import lombok.EqualsAndHashCode;
     "logging", "clientRackInitImage", "rack", "metricsConfig", "tracing",
     "template", "externalConfiguration" })
 @EqualsAndHashCode(doNotUseGetters = true, callSuper = true)
-public abstract class AbstractKafkaConnectSpec extends Spec implements HasConfigurableMetrics, HasConfigurableLogging, HasJmxOptions {
+public abstract class AbstractKafkaConnectSpec extends Spec implements HasConfigurableMetrics, HasConfigurableLogging, HasJmxOptions, HasLivenessProbe, HasReadinessProbe {
     private static final long serialVersionUID = 1L;
 
     private Logging logging;
-    private Integer replicas;
+    private int replicas = 3;
     private String version;
     private String image;
     private ResourceRequirements resources;
@@ -45,10 +45,15 @@ public abstract class AbstractKafkaConnectSpec extends Spec implements HasConfig
     private String clientRackInitImage;
     private Rack rack;
 
-    @Description("The number of pods in the Kafka Connect group.")
+    @Description("The number of pods in the Kafka Connect group. " +
+            "Defaults to `3`.")
     @JsonProperty(defaultValue = "3")
-    public Integer getReplicas() {
+    public int getReplicas() {
         return replicas;
+    }
+
+    public void setReplicas(int replicas) {
+        this.replicas = replicas;
     }
 
     @Description("Logging configuration for Kafka Connect")
@@ -61,10 +66,6 @@ public abstract class AbstractKafkaConnectSpec extends Spec implements HasConfig
     @Override
     public void setLogging(Logging logging) {
         this.logging = logging;
-    }
-
-    public void setReplicas(Integer replicas) {
-        this.replicas = replicas;
     }
 
     @Description("The Kafka Connect version. Defaults to {DefaultKafkaVersion}. " +
@@ -162,7 +163,7 @@ public abstract class AbstractKafkaConnectSpec extends Spec implements HasConfig
     }
 
     @Description("Template for Kafka Connect and Kafka Mirror Maker 2 resources. " +
-            "The template allows users to specify how the `Deployment`, `Pods` and `Service` are generated.")
+            "The template allows users to specify how the `Pods`, `Service`, and other services are generated.")
     @JsonInclude(JsonInclude.Include.NON_EMPTY)
     public KafkaConnectTemplate getTemplate() {
         return template;

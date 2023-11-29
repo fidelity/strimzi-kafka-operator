@@ -10,7 +10,7 @@ This procedure shows how to deploy a Kafka Bridge cluster to your Kubernetes clu
 
 The deployment uses a YAML file to provide the specification to create a `KafkaBridge` resource.
 
-Strimzi provides xref:deploy-examples-{context}[example configuration files].
+Strimzi provides xref:config-examples-{context}[example configuration files].
 In this procedure, we use the following example file:
 
 * `examples/bridge/kafka-bridge.yaml`
@@ -32,23 +32,27 @@ kubectl apply -f examples/bridge/kafka-bridge.yaml
 +
 [source,shell,subs="+quotes"]
 ----
-kubectl get deployments -n _<my_cluster_operator_namespace>_
+kubectl get pods -n _<my_cluster_operator_namespace>_
 ----
 +
 .Output shows the deployment name and readiness
 [source,shell,subs="+quotes"]
 ----
-NAME              READY  UP-TO-DATE  AVAILABLE
-my-bridge-bridge  1/1    1           1
+NAME                       READY  STATUS   RESTARTS
+my-bridge-bridge-<pod_id>  1/1    Running  0
 ----
 +
 `my-bridge` is the name of the Kafka Bridge cluster.
 +
+A pod ID identifies each pod created.
++
+With the default deployment, you install a single Kafka Bridge pod.
++
 `READY` shows the number of replicas that are ready/expected.
-The deployment is successful when the `AVAILABLE` output shows `1`.
+The deployment is successful when the `STATUS` displays as `Running`.
 
 [role="_additional-resources"]
 .Additional resources
 
-* link:{BookURLConfiguring}#assembly-config-kafka-bridge-str[Kafka Bridge cluster configuration^]
+* xref:con-config-kafka-bridge-str[Kafka Bridge cluster configuration]
 * link:{BookURLBridge}[Using the Strimzi Kafka Bridge^]

@@ -5,7 +5,7 @@
     <parent>
         <artifactId>strimzi</artifactId>
         <groupId>io.strimzi</groupId>
-        <version>0.35.0-SNAPSHOT</version>
+        <version>0.39.0-SNAPSHOT</version>
     </parent>
     <modelVersion>4.0.0</modelVersion>
     <artifactId>systemtest</artifactId>
@@ -13,6 +13,9 @@
     <properties>
         <skipTests>true</skipTests>
         <failsafe.forkCount>0</failsafe.forkCount>
+
+        <!-- Points to the root directory of the Strimzi project directory and can be used for fixed location to configuration files -->
+        <strimziRootDirectory>${basedir}${file.separator}..</strimziRootDirectory>
     </properties>
 
     <dependencies>
@@ -209,12 +212,12 @@
         </dependency>
         <dependency>
             <groupId>org.bouncycastle</groupId>
-            <artifactId>bcpkix-jdk15on</artifactId>
+            <artifactId>bcpkix-jdk18on</artifactId>
             <version>${bouncycastle.version}</version>
         </dependency>
         <dependency>
             <groupId>org.bouncycastle</groupId>
-            <artifactId>bcprov-jdk15on</artifactId>
+            <artifactId>bcprov-jdk18on</artifactId>
             <version>${bouncycastle.version}</version>
         </dependency>
         <dependency>
@@ -253,6 +256,7 @@
                             <goal>compile</goal>
                         </goals>
                         <configuration>
+                            <useIncrementalCompilation>false</useIncrementalCompilation>
                             <compilerArgs combine.self="override">
                                 <arg>-Xlint:deprecation</arg>
                             </compilerArgs>
@@ -343,6 +347,14 @@
         </profile>
 
         <profile>
+            <id>upgrade</id>
+            <properties>
+                <skipTests>false</skipTests>
+                <groups>upgrade</groups>
+            </properties>
+        </profile>
+
+        <profile>
             <id>operators</id>
             <properties>
                 <skipTests>false</skipTests>
@@ -356,6 +368,7 @@
                     !security/**/*ST,
                     !rollingupdate/**/*ST,
                     !watcher/**/*ST,
+                    !rollingupdate/**/*ST,
                     !tracing/**/*ST
                 </it.test>
             </properties>
@@ -375,6 +388,7 @@
                     security/**/*ST,
                     rollingupdate/**/*ST,
                     watcher/**/*ST,
+                    rollingupdate/**/*ST,
                     tracing/**/*ST
                 </it.test>
             </properties>
@@ -507,7 +521,7 @@
                 <skipTests>false</skipTests>
                 <groups>upgrade</groups>
                 <it.test>
-                    !KafkaUpgradeDowngradeIsolatedST
+                    !KafkaUpgradeDowngradeST
                 </it.test>
             </properties>
         </profile>
@@ -518,7 +532,7 @@
                 <skipTests>false</skipTests>
                 <groups>upgrade</groups>
                 <it.test>
-                    KafkaUpgradeDowngradeIsolatedST
+                    KafkaUpgradeDowngradeST
                 </it.test>
             </properties>
         </profile>
@@ -543,5 +557,18 @@
                 </groups>
             </properties>
         </profile>
+
+        <profile>
+            <id>olm_acceptance_upgrade</id>
+            <properties>
+                <skipTests>false</skipTests>
+                <groups>
+                    acceptance,
+                    olm,
+                    olmupgrade
+                </groups>
+            </properties>
+        </profile>
+
     </profiles>
 </project>

@@ -1,7 +1,7 @@
 Configuration for Kafka listeners.
 
 [id='property-listener-config-brokerCertChainAndKey-{context}']
-=== `brokerCertChainAndKey`
+= `brokerCertChainAndKey`
 
 The `brokerCertChainAndKey` property is only used with listeners that have TLS encryption enabled.
 You can use the property to provide your own Kafka listener certificates.
@@ -11,7 +11,7 @@ You can use the property to provide your own Kafka listener certificates.
 ----
 listeners:
   #...
-  - name: external
+  - name: external3
     port: 9094
     type: loadbalancer
     tls: true
@@ -26,7 +26,7 @@ listeners:
 ----
 
 [id='property-listener-config-traffic-policy-{context}']
-=== `externalTrafficPolicy`
+= `externalTrafficPolicy`
 
 The `externalTrafficPolicy` property is used with `loadbalancer` and `nodeport` listeners.
 When exposing Kafka outside of Kubernetes you can choose `Local` or `Cluster`.
@@ -34,7 +34,7 @@ When exposing Kafka outside of Kubernetes you can choose `Local` or `Cluster`.
 The default is `Cluster`.
 
 [id='property-listener-config-source-ranges-{context}']
-=== `loadBalancerSourceRanges`
+= `loadBalancerSourceRanges`
 
 The `loadBalancerSourceRanges` property is only used with `loadbalancer` listeners.
 When exposing Kafka outside of Kubernetes use source ranges, in addition to labels and annotations, to customize how a service is created.
@@ -44,7 +44,7 @@ When exposing Kafka outside of Kubernetes use source ranges, in addition to labe
 ----
 listeners:
   #...
-  - name: external
+  - name: external3
     port: 9094
     type: loadbalancer
     tls: false
@@ -58,7 +58,7 @@ listeners:
 ----
 
 [id='property-listener-config-class-{context}']
-=== `class`
+= `class`
 
 The `class` property is only used with `ingress` listeners.
 You can configure the `Ingress` class using the `class` property.
@@ -68,7 +68,7 @@ You can configure the `Ingress` class using the `class` property.
 ----
 listeners:
   #...
-  - name: external
+  - name: external2
     port: 9094
     type: ingress
     tls: true
@@ -79,7 +79,7 @@ listeners:
 ----
 
 [id='property-listener-config-preferredNodePortAddressType-{context}']
-=== `preferredNodePortAddressType`
+= `preferredNodePortAddressType`
 
 The `preferredNodePortAddressType` property is only used with `nodeport` listeners.
 
@@ -99,7 +99,7 @@ If the preferred address type is not found, Strimzi proceeds through the types i
 ----
 listeners:
   #...
-  - name: external
+  - name: external4
     port: 9094
     type: nodeport
     tls: false
@@ -110,7 +110,7 @@ listeners:
 ----
 
 [id='property-listener-config-dns-{context}']
-=== `useServiceDnsDomain`
+= `useServiceDnsDomain`
 
 The `useServiceDnsDomain` property is only used with `internal` and `cluster-ip` listeners.
 It defines whether the fully-qualified DNS names that include the cluster service suffix (usually `.cluster.local`) are used.

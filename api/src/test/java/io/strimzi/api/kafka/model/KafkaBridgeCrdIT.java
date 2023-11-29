@@ -76,11 +76,6 @@ public class KafkaBridgeCrdIT extends AbstractCrdIT {
     }
 
     @Test
-    void testKafkaBridgeWithJaegerTracing() {
-        createDeleteCustomResource("KafkaBridge-with-jaeger-tracing.yaml");
-    }
-
-    @Test
     void testKafkaBridgeWithOpenTelemetryTracing() {
         createDeleteCustomResource("KafkaBridge-with-opentelemetry-tracing.yaml");
     }
@@ -109,6 +104,9 @@ public class KafkaBridgeCrdIT extends AbstractCrdIT {
 
     @Test
     void testKafkaBridgeWithExtraProperty() {
+        // oc tool does not fail with extra properties, it shows only a warning. So this test does not pass on OpenShift
+        assumeKube();
+
         Throwable exception = assertThrows(
             KubeClusterException.class,
             () -> createDeleteCustomResource("KafkaBridge-with-extra-property.yaml"));

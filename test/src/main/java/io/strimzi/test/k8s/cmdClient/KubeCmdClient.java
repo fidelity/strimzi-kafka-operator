@@ -24,9 +24,6 @@ import static java.util.stream.Collectors.toList;
 public interface KubeCmdClient<K extends KubeCmdClient<K>> {
 
     String defaultNamespace();
-    String defaultOlmNamespace();
-    String defaultOlmSourceNamespace();
-
 
     /** Deletes the resources by resource name. */
     K deleteByName(String resourceType, String resourceName);
@@ -104,7 +101,11 @@ public interface KubeCmdClient<K extends KubeCmdClient<K>> {
      */
     ExecResult execInPod(String pod, String... command);
 
+    ExecResult execInPod(String pod, boolean throwErrors, String... command);
+
     ExecResult execInPod(Level logLevel, String pod, String... command);
+
+    ExecResult execInPod(Level logLevel, String pod, boolean throwErrors, String... command);
 
     ExecResult execInCurrentNamespace(String... commands);
 

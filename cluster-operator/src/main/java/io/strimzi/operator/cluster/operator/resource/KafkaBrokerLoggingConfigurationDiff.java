@@ -8,7 +8,7 @@ package io.strimzi.operator.cluster.operator.resource;
 import io.strimzi.operator.common.Reconciliation;
 import io.strimzi.operator.common.ReconciliationLogger;
 import io.strimzi.operator.common.Util;
-import io.strimzi.operator.common.operator.resource.AbstractJsonDiff;
+import io.strimzi.operator.common.model.AbstractJsonDiff;
 import org.apache.kafka.clients.admin.AlterConfigOp;
 import org.apache.kafka.clients.admin.Config;
 import org.apache.kafka.clients.admin.ConfigEntry;
@@ -34,7 +34,7 @@ public class KafkaBrokerLoggingConfigurationDiff extends AbstractJsonDiff {
     /**
      * Constructor
      *
-     * @param reconciliation Reconciliatin marker
+     * @param reconciliation Reconciliation marker
      * @param brokerConfigs  Current broker configuration from Kafka Admin API
      * @param desired        Desired logging configuration
      */

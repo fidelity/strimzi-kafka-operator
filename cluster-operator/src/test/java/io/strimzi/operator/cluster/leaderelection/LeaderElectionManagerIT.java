@@ -12,8 +12,10 @@ import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
 
-import java.time.Duration;
+import java.util.HashMap;
+import java.util.Map;
 import java.util.concurrent.CountDownLatch;
+import java.util.function.Consumer;
 
 import static org.hamcrest.CoreMatchers.is;
 import static org.hamcrest.MatcherAssert.assertThat;
@@ -44,8 +46,8 @@ public class LeaderElectionManagerIT {
         CountDownLatch le2Leader = new CountDownLatch(1);
         CountDownLatch le2NotLeader = new CountDownLatch(1);
 
-        LeaderElectionManager le1 = createLeaderElectionManager("le-1", le1Leader::countDown, le1NotLeader::countDown);
-        LeaderElectionManager le2 = createLeaderElectionManager("le-2", le2Leader::countDown, le2NotLeader::countDown);
+        LeaderElectionManager le1 = createLeaderElectionManager("le-1", le1Leader::countDown, i -> le1NotLeader.countDown());
+        LeaderElectionManager le2 = createLeaderElectionManager("le-2", le2Leader::countDown, i -> le2NotLeader.countDown());
 
         // Start the first member => it should become a leader
         le1.start();
@@ -68,9 +70,17 @@ public class LeaderElectionManagerIT {
         assertThat(getLease().getSpec().getHolderIdentity(), is(""));
     }
 
-    private LeaderElectionManager createLeaderElectionManager(String identity, Runnable startLeadershipCallback, Runnable stopLeadershipCallback)   {
+    private LeaderElectionManager createLeaderElectionManager(String identity, Runnable startLeadershipCallback, Consumer<Boolean> stopLeadershipCallback)   {
+        Map<String, String> envVars = new HashMap<>();
+        envVars.put(LeaderElectionManagerConfig.ENV_VAR_LEADER_ELECTION_LEASE_NAME.key(), LEASE_NAME);
+        envVars.put(LeaderElectionManagerConfig.ENV_VAR_LEADER_ELECTION_LEASE_NAMESPACE.key(), NAMESPACE);
+        envVars.put(LeaderElectionManagerConfig.ENV_VAR_LEADER_ELECTION_IDENTITY.key(), identity);
+        envVars.put(LeaderElectionManagerConfig.ENV_VAR_LEADER_ELECTION_LEASE_DURATION_MS.key(), "1000");
+        envVars.put(LeaderElectionManagerConfig.ENV_VAR_LEADER_ELECTION_RENEW_DEADLINE_MS.key(), "800");
+        envVars.put(LeaderElectionManagerConfig.ENV_VAR_LEADER_ELECTION_RETRY_PERIOD_MS.key(), "200");
+
         return new LeaderElectionManager(
-                client, new LeaderElectionManagerConfig(LEASE_NAME, NAMESPACE, identity, Duration.ofMillis(1_000L), Duration.ofMillis(800L), Duration.ofMillis(200L)),
+                client, LeaderElectionManagerConfig.fromMap(envVars),
                 startLeadershipCallback,
                 stopLeadershipCallback,
                 s -> {

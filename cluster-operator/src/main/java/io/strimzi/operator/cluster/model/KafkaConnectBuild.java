@@ -36,6 +36,7 @@ import io.strimzi.operator.cluster.model.securityprofiles.PodSecurityProviderCon
 import io.strimzi.operator.common.Annotations;
 import io.strimzi.operator.common.Reconciliation;
 import io.strimzi.operator.common.Util;
+import io.strimzi.operator.common.model.InvalidResourceException;
 
 import java.util.ArrayList;
 import java.util.Arrays;
@@ -75,24 +76,29 @@ public class KafkaConnectBuild extends AbstractModel {
      *
      * @param reconciliation The reconciliation
      * @param resource Kubernetes resource with metadata containing the namespace and cluster name
+     * @param sharedEnvironmentProvider sharedEnvironmentProvider provider
      */
-    protected KafkaConnectBuild(Reconciliation reconciliation, HasMetadata resource) {
-        super(reconciliation, resource, KafkaConnectResources.buildPodName(resource.getMetadata().getName()), COMPONENT_TYPE);
+    protected KafkaConnectBuild(Reconciliation reconciliation, HasMetadata resource, SharedEnvironmentProvider sharedEnvironmentProvider) {
+        super(reconciliation, resource, KafkaConnectResources.buildPodName(resource.getMetadata().getName()), COMPONENT_TYPE, sharedEnvironmentProvider);
 
         this.image = System.getenv().getOrDefault(ClusterOperatorConfig.STRIMZI_DEFAULT_KANIKO_EXECUTOR_IMAGE, DEFAULT_KANIKO_EXECUTOR_IMAGE);
     }
 
     /**
-     * Created the KafkaConnectBuild instance from the Kafka Connect Custom Resource
+     * Creates the KafkaConnectBuild instance from the Kafka Connect Custom Resource.
      *
      * @param reconciliation The reconciliation
      * @param kafkaConnect  Kafka Connect CR with the build configuration
      * @param versions      Kafka versions configuration
+     * @param sharedEnvironmentProvider  Shared environment provider
      * @return              Instance of KafkaConnectBuild class
      */
     @SuppressWarnings({"checkstyle:CyclomaticComplexity", "checkstyle:NPathComplexity"})
-    public static KafkaConnectBuild fromCrd(Reconciliation reconciliation, KafkaConnect kafkaConnect, KafkaVersion.Lookup versions) {
-        KafkaConnectBuild result = new KafkaConnectBuild(reconciliation, kafkaConnect);
+    public static KafkaConnectBuild fromCrd(Reconciliation reconciliation,
+                                            KafkaConnect kafkaConnect,
+                                            KafkaVersion.Lookup versions,
+                                            SharedEnvironmentProvider sharedEnvironmentProvider) {
+        KafkaConnectBuild result = new KafkaConnectBuild(reconciliation, kafkaConnect, sharedEnvironmentProvider);
         KafkaConnectSpec spec = kafkaConnect.getSpec();
 
         if (spec == null) {
@@ -105,8 +111,13 @@ public class KafkaConnectBuild extends AbstractModel {
             // The additionalKanikoOptions are validated separately to avoid parsing the list twice
             if (spec.getBuild().getOutput() != null
                     && spec.getBuild().getOutput() instanceof DockerOutput dockerOutput) {
+
+                // Validation to check if KafkaConnect .spec.image equals .spec.build.output.image name
+                if (dockerOutput.getImage() != null && spec.getImage() != null && dockerOutput.getImage().equals(spec.getImage())) {
+                    throw new InvalidResourceException("KafkaConnect .spec.image cannot be the same as .spec.build.output.image");
+                }
                 if (dockerOutput.getAdditionalKanikoOptions() != null
-                        && !dockerOutput.getAdditionalKanikoOptions().isEmpty())  {
+                        && !dockerOutput.getAdditionalKanikoOptions().isEmpty()) {
                     validateAdditionalKanikoOptions(dockerOutput.getAdditionalKanikoOptions());
                     result.additionalKanikoOptions = dockerOutput.getAdditionalKanikoOptions();
                 }
@@ -217,7 +228,7 @@ public class KafkaConnectBuild extends AbstractModel {
      * @return  Instance of the KafkaConnectDockerfile class with the prepared Dockerfile
      */
     public KafkaConnectDockerfile generateDockerfile()  {
-        return new KafkaConnectDockerfile(baseImage, build);
+        return new KafkaConnectDockerfile(baseImage, build, sharedEnvironmentProvider);
     }
 
     /**
@@ -302,7 +313,7 @@ public class KafkaConnectBuild extends AbstractModel {
      */
     private List<EnvVar> getBuildContainerEnvVars() {
         // Add shared environment variables used for all containers
-        List<EnvVar> varList = new ArrayList<>(ContainerUtils.requiredEnvVars());
+        List<EnvVar> varList = new ArrayList<>(sharedEnvironmentProvider.variables());
 
         ContainerUtils.addContainerEnvsToExistingEnvs(reconciliation, varList, templateContainer);
 

@@ -10,9 +10,9 @@ import io.strimzi.api.kafka.model.KafkaConnectResources;
 import io.strimzi.api.kafka.model.KafkaExporterResources;
 import io.strimzi.api.kafka.model.KafkaMirrorMaker2Resources;
 import io.strimzi.api.kafka.model.KafkaResources;
-import io.strimzi.systemtest.Constants;
+import io.strimzi.systemtest.TestConstants;
+import io.strimzi.systemtest.Environment;
 import io.strimzi.systemtest.resources.ComponentType;
-import io.strimzi.systemtest.resources.ResourceManager;
 import io.strimzi.systemtest.resources.crd.KafkaConnectResource;
 import io.strimzi.systemtest.resources.crd.KafkaMirrorMaker2Resource;
 import io.strimzi.systemtest.resources.crd.KafkaResource;
@@ -32,8 +32,8 @@ import java.util.concurrent.ExecutionException;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
-import static io.strimzi.systemtest.Constants.GLOBAL_POLL_INTERVAL;
-import static io.strimzi.systemtest.Constants.GLOBAL_TIMEOUT;
+import static io.strimzi.systemtest.TestConstants.GLOBAL_POLL_INTERVAL;
+import static io.strimzi.systemtest.TestConstants.GLOBAL_TIMEOUT;
 import static io.strimzi.test.k8s.KubeClusterResource.cmdKubeClient;
 import static io.strimzi.test.k8s.KubeClusterResource.kubeClient;
 
@@ -141,7 +141,7 @@ public class MetricsCollector {
 
     protected MetricsCollector(Builder builder) {
         if (builder.namespaceName == null || builder.namespaceName.isEmpty()) builder.namespaceName = kubeClient().getNamespace();
-        if (builder.scraperPodName == null || builder.scraperPodName.isEmpty()) throw new InvalidParameterException("Scraper pod name is not set");
+        if (builder.scraperPodName == null || builder.scraperPodName.isEmpty()) throw new InvalidParameterException("Scraper Pod name is not set");
         if (builder.componentType == null) throw new InvalidParameterException("Component type is not set");
         if (builder.componentName == null || builder.componentName.isEmpty()) {
             if (!builder.componentType.equals(ComponentType.ClusterOperator)) {
@@ -171,16 +171,16 @@ public class MetricsCollector {
             case KafkaConnect:
                 return KafkaConnectResource.getLabelSelector(componentName, KafkaConnectResources.deploymentName(componentName));
             case KafkaExporter:
-                return kubeClient(namespaceName).getDeploymentSelectors(KafkaExporterResources.deploymentName(componentName));
+                return kubeClient().getDeploymentSelectors(namespaceName, KafkaExporterResources.deploymentName(componentName));
             case KafkaMirrorMaker2:
                 return KafkaMirrorMaker2Resource.getLabelSelector(componentName, KafkaMirrorMaker2Resources.deploymentName(componentName));
             case UserOperator:
             case TopicOperator:
-                return kubeClient(namespaceName).getDeploymentSelectors(KafkaResources.entityOperatorDeploymentName(componentName));
+                return kubeClient().getDeploymentSelectors(namespaceName, KafkaResources.entityOperatorDeploymentName(componentName));
             case ClusterOperator:
-                return kubeClient(namespaceName).getDeploymentSelectors(ResourceManager.getCoDeploymentName());
+                return kubeClient().getDeploymentSelectors(namespaceName, componentName);
             case KafkaBridge:
-                return kubeClient(namespaceName).getDeploymentSelectors(KafkaBridgeResources.deploymentName(componentName));
+                return kubeClient().getDeploymentSelectors(namespaceName, KafkaBridgeResources.deploymentName(componentName));
             default:
                 return new LabelSelector();
         }
@@ -202,15 +202,15 @@ public class MetricsCollector {
     private int getDefaultMetricsPortForComponent() {
         switch (this.componentType) {
             case UserOperator:
-                return Constants.USER_OPERATOR_METRICS_PORT;
+                return TestConstants.USER_OPERATOR_METRICS_PORT;
             case TopicOperator:
-                return Constants.TOPIC_OPERATOR_METRICS_PORT;
+                return TestConstants.TOPIC_OPERATOR_METRICS_PORT;
             case ClusterOperator:
-                return Constants.CLUSTER_OPERATOR_METRICS_PORT;
+                return TestConstants.CLUSTER_OPERATOR_METRICS_PORT;
             case KafkaBridge:
-                return Constants.KAFKA_BRIDGE_METRICS_PORT;
+                return TestConstants.KAFKA_BRIDGE_METRICS_PORT;
             default:
-                return Constants.COMPONENTS_METRICS_PORT;
+                return TestConstants.COMPONENTS_METRICS_PORT;
         }
     }
 
@@ -244,8 +244,9 @@ public class MetricsCollector {
         ArrayList<Double> values = collectSpecificMetric(pattern);
 
         if (values.isEmpty()) {
-            TestUtils.waitFor(String.format("metrics contain pattern: %s", pattern.toString()), Constants.GLOBAL_POLL_INTERVAL_MEDIUM, Constants.GLOBAL_STATUS_TIMEOUT, () -> {
+            TestUtils.waitFor(String.format("metrics contain pattern: %s", pattern.toString()), TestConstants.GLOBAL_POLL_INTERVAL_MEDIUM, TestConstants.GLOBAL_STATUS_TIMEOUT, () -> {
                 this.collectMetricsFromPods();
+                LOGGER.debug("Collected data: {}", collectedData);
                 ArrayList<Double> vals = this.collectSpecificMetric(pattern);
 
                 if (!vals.isEmpty()) {
@@ -264,30 +265,32 @@ public class MetricsCollector {
      * Collect metrics from specific pod
      * @return collected metrics
      */
-    private String collectMetrics(String metricsPodIp) throws InterruptedException, ExecutionException, IOException {
+    private String collectMetrics(String metricsPodIp, String podName) throws InterruptedException, ExecutionException, IOException {
         List<String> executableCommand = Arrays.asList(cmdKubeClient(namespaceName).toString(), "exec", scraperPodName,
             "-n", namespaceName,
             "--", "curl", metricsPodIp + ":" + metricsPort + metricsPath);
+
+        LOGGER.debug("Executing command:{} for scrape the metrics", executableCommand);
 
         Exec exec = new Exec();
         // 20 seconds should be enough for collect data from the pod
         int ret = exec.execute(null, executableCommand, 20_000);
 
-        LOGGER.info("Metrics collection for PodIp {} from Pod {} finished with return code: {}", metricsPodIp, scraperPodName, ret);
+        LOGGER.info("Metrics collection for Pod: {}/{}({}) from Pod: {}/{} finished with return code: {}", namespaceName, podName, metricsPodIp, namespaceName, scraperPodName, ret);
         return exec.out();
     }
 
     /**
-     * Collect metrics from all pods with specific selector with wait
+     * Collect metrics from all Pods with specific selector with wait
      */
     @SuppressWarnings("unchecked")
     public void collectMetricsFromPods() {
         Map<String, String>[] metricsData = (Map<String, String>[]) new HashMap[1];
-        TestUtils.waitFor("metrics has data", GLOBAL_POLL_INTERVAL, GLOBAL_TIMEOUT,
+        TestUtils.waitFor("metrics to contain data", GLOBAL_POLL_INTERVAL, GLOBAL_TIMEOUT,
             () -> {
                 metricsData[0] = collectMetricsFromPodsWithoutWait();
 
-                // Kafka Exporter metrics should be non-empty
+                // KafkaExporter metrics should be non-empty
                 if (!(metricsData[0].size() > 0)) {
                     return false;
                 }
@@ -307,7 +310,16 @@ public class MetricsCollector {
         Map<String, String> map = new HashMap<>();
         kubeClient(namespaceName).listPods(namespaceName, componentLabelSelector).forEach(p -> {
             try {
-                map.put(p.getMetadata().getName(), collectMetrics(p.getStatus().getPodIP()));
+                final String podName = p.getMetadata().getName();
+                String podIP = p.getStatus().getPodIP();
+
+                if (Environment.isIpv6Family()) {
+                    // for curl command we need to add '[' and ']' to make it work
+                    // f.e. http://[fd00:10:244::1d]:9404 this would work but http://fd00:10:244::1d:9404 will not
+                    podIP = "[" + podIP + "]";
+                }
+
+                map.put(podName, collectMetrics(podIP, podName));
             } catch (InterruptedException | ExecutionException | IOException e) {
                 throw new RuntimeException(e);
             }

@@ -5,7 +5,7 @@
 package io.strimzi.systemtest.resources.crd;
 
 import io.fabric8.kubernetes.api.model.apps.Deployment;
-import io.strimzi.systemtest.Constants;
+import io.strimzi.systemtest.TestConstants;
 import io.strimzi.systemtest.resources.ResourceManager;
 import io.strimzi.systemtest.resources.ResourceType;
 import io.strimzi.systemtest.utils.kubeUtils.controllers.DeploymentUtils;
@@ -16,7 +16,7 @@ public class KafkaClientsResource implements ResourceType<Deployment> {
 
     @Override
     public String getKind() {
-        return Constants.DEPLOYMENT;
+        return TestConstants.DEPLOYMENT;
     }
     @Override
     public Deployment get(String namespace, String name) {
@@ -26,11 +26,16 @@ public class KafkaClientsResource implements ResourceType<Deployment> {
 
     @Override
     public void create(Deployment resource) {
-        ResourceManager.kubeClient().namespace(resource.getMetadata().getNamespace()).createOrReplaceDeployment(resource);
+        ResourceManager.kubeClient().namespace(resource.getMetadata().getNamespace()).createDeployment(resource);
     }
     @Override
     public void delete(Deployment resource) {
         ResourceManager.kubeClient().namespace(resource.getMetadata().getNamespace()).deleteDeployment(resource.getMetadata().getNamespace(), resource.getMetadata().getName());
+    }
+
+    @Override
+    public void update(Deployment resource) {
+        ResourceManager.kubeClient().namespace(resource.getMetadata().getNamespace()).updateDeployment(resource);
     }
 
     @Override

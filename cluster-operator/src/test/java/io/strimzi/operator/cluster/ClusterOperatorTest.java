@@ -12,8 +12,8 @@ import io.fabric8.kubernetes.client.dsl.AnyNamespaceOperation;
 import io.fabric8.kubernetes.client.dsl.MixedOperation;
 import io.fabric8.kubernetes.client.informers.SharedIndexInformer;
 import io.fabric8.kubernetes.client.informers.cache.Indexer;
-import io.strimzi.operator.PlatformFeaturesAvailability;
 import io.strimzi.operator.cluster.model.securityprofiles.PodSecurityProviderFactory;
+import io.strimzi.operator.common.ShutdownHook;
 import io.strimzi.platform.KubernetesVersion;
 import io.vertx.core.Vertx;
 import io.vertx.core.VertxOptions;
@@ -32,6 +32,7 @@ import java.net.URL;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
@@ -42,6 +43,7 @@ import static org.hamcrest.Matchers.hasSize;
 import static org.hamcrest.Matchers.is;
 import static org.hamcrest.Matchers.lessThanOrEqualTo;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.Mockito.doAnswer;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
@@ -57,15 +59,16 @@ public class ClusterOperatorTest {
 
     private static Map<String, String> buildEnv(String namespaces, boolean podSetsOnly) {
         Map<String, String> env = new HashMap<>();
-        env.put(ClusterOperatorConfig.STRIMZI_NAMESPACE, namespaces);
-        env.put(ClusterOperatorConfig.STRIMZI_FULL_RECONCILIATION_INTERVAL_MS, "120000");
+        env.put(ClusterOperatorConfig.NAMESPACE.key(), namespaces);
+        env.put(ClusterOperatorConfig.FULL_RECONCILIATION_INTERVAL_MS.key(), "120000");
         env.put(ClusterOperatorConfig.STRIMZI_KAFKA_IMAGES, KafkaVersionTestUtils.getKafkaImagesEnvVarString());
         env.put(ClusterOperatorConfig.STRIMZI_KAFKA_CONNECT_IMAGES, KafkaVersionTestUtils.getKafkaConnectImagesEnvVarString());
         env.put(ClusterOperatorConfig.STRIMZI_KAFKA_MIRROR_MAKER_IMAGES, KafkaVersionTestUtils.getKafkaMirrorMakerImagesEnvVarString());
         env.put(ClusterOperatorConfig.STRIMZI_KAFKA_MIRROR_MAKER_2_IMAGES, KafkaVersionTestUtils.getKafkaMirrorMaker2ImagesEnvVarString());
+        env.put(ClusterOperatorConfig.FEATURE_GATES.key(), "-KafkaNodePools");
 
         if (podSetsOnly) {
-            env.put(ClusterOperatorConfig.STRIMZI_POD_SET_RECONCILIATION_ONLY, "true");
+            env.put(ClusterOperatorConfig.POD_SET_RECONCILIATION_ONLY.key(), "true");
         }
 
         return env;
@@ -132,6 +135,7 @@ public class ClusterOperatorTest {
             Indexer mockCmIndexer = mock(Indexer.class);
             SharedIndexInformer mockCmInformer = mock(SharedIndexInformer.class);
             when(mockCmInformer.getIndexer()).thenReturn(mockCmIndexer);
+            when(mockCmInformer.stopped()).thenReturn(CompletableFuture.completedFuture(null));
 
             MixedOperation mockNamespacedCms = mock(MixedOperation.class);
             when(mockNamespacedCms.watch(any())).thenAnswer(invo -> {
@@ -143,7 +147,7 @@ public class ClusterOperatorTest {
                 }).when(mockWatch).close();
                 return mockWatch;
             });
-            when(mockNamespacedCms.inform()).thenAnswer(i -> {
+            when(mockNamespacedCms.runnableInformer(anyLong())).thenAnswer(i -> {
                 numInformers.getAndIncrement();
                 return mockCmInformer;
             });
@@ -156,7 +160,8 @@ public class ClusterOperatorTest {
             SharedIndexInformer mockPodInformer = mock(SharedIndexInformer.class);
             MixedOperation mockNamespacedPods = mock(MixedOperation.class);
             when(mockPodInformer.getIndexer()).thenReturn(mockPodIndexer);
-            when(mockNamespacedPods.inform()).thenAnswer(i -> {
+            when(mockPodInformer.stopped()).thenReturn(CompletableFuture.completedFuture(null));
+            when(mockNamespacedPods.runnableInformer(anyLong())).thenAnswer(i -> {
                 numInformers.getAndIncrement();
                 return mockPodInformer;
             });
@@ -170,7 +175,8 @@ public class ClusterOperatorTest {
         CountDownLatch latch = new CountDownLatch(namespaceList.size() + 1);
 
         Main.deployClusterOperatorVerticles(VERTX, client, ResourceUtils.metricsProvider(), new PlatformFeaturesAvailability(false, KubernetesVersion.MINIMAL_SUPPORTED_VERSION),
-                    ClusterOperatorConfig.fromMap(env, KafkaVersionTestUtils.getKafkaVersionLookup()))
+                    ClusterOperatorConfig.buildFromMap(env, KafkaVersionTestUtils.getKafkaVersionLookup()), new ShutdownHook())
+
             .onComplete(context.succeeding(v -> context.verify(() -> {
                 assertThat("A verticle per namespace", VERTX.deploymentIDs(), hasSize(namespaceList.size()));
                 for (String deploymentId: VERTX.deploymentIDs()) {
@@ -183,7 +189,7 @@ public class ClusterOperatorTest {
                     });
                 }
 
-                int maximumExpectedNumberOfWatchers = podSetsOnly ? 0 : 7 * namespaceList.size();
+                int maximumExpectedNumberOfWatchers = podSetsOnly ? 0 : 8 * namespaceList.size();
                 assertThat("Looks like there were more watchers than namespaces",
                         numWatchers.get(), lessThanOrEqualTo(maximumExpectedNumberOfWatchers));
 
@@ -223,6 +229,7 @@ public class ClusterOperatorTest {
         Indexer mockCmIndexer = mock(Indexer.class);
         SharedIndexInformer mockCmInformer = mock(SharedIndexInformer.class);
         when(mockCmInformer.getIndexer()).thenReturn(mockCmIndexer);
+        when(mockCmInformer.stopped()).thenReturn(CompletableFuture.completedFuture(null));
 
         AnyNamespaceOperation mockFilteredCms = mock(AnyNamespaceOperation.class);
         when(mockFilteredCms.withLabels(any())).thenReturn(mockFilteredCms);
@@ -235,7 +242,7 @@ public class ClusterOperatorTest {
             }).when(mockWatch).close();
             return mockWatch;
         });
-        when(mockFilteredCms.inform()).thenAnswer(i -> {
+        when(mockFilteredCms.runnableInformer(anyLong())).thenAnswer(i -> {
             numInformers.getAndIncrement();
             return mockCmInformer;
         });
@@ -251,7 +258,8 @@ public class ClusterOperatorTest {
         when(mockFilteredPods.withLabelSelector(any(LabelSelector.class))).thenReturn(mockFilteredPods);
         when(mockPods.inAnyNamespace()).thenReturn(mockFilteredPods);
         when(mockPodInformer.getIndexer()).thenReturn(mockPodIndexer);
-        when(mockFilteredPods.inform()).thenAnswer(i -> {
+        when(mockPodInformer.stopped()).thenReturn(CompletableFuture.completedFuture(null));
+        when(mockFilteredPods.runnableInformer(anyLong())).thenAnswer(i -> {
             numInformers.getAndIncrement();
             return mockPodInformer;
         });
@@ -260,8 +268,9 @@ public class ClusterOperatorTest {
         Map<String, String> env = buildEnv(namespaces, podSetsOnly);
 
         CountDownLatch latch = new CountDownLatch(2);
+
         Main.deployClusterOperatorVerticles(VERTX, client, ResourceUtils.metricsProvider(), new PlatformFeaturesAvailability(false, KubernetesVersion.MINIMAL_SUPPORTED_VERSION),
-                ClusterOperatorConfig.fromMap(env, KafkaVersionTestUtils.getKafkaVersionLookup()))
+                ClusterOperatorConfig.buildFromMap(env, KafkaVersionTestUtils.getKafkaVersionLookup()), new ShutdownHook())
             .onComplete(context.succeeding(v -> context.verify(() -> {
                 assertThat("A verticle per namespace", VERTX.deploymentIDs(), hasSize(1));
                 for (String deploymentId: VERTX.deploymentIDs()) {
@@ -274,7 +283,7 @@ public class ClusterOperatorTest {
                     });
                 }
 
-                int maximumExpectedNumberOfWatchers = podSetsOnly ? 0 : 7;
+                int maximumExpectedNumberOfWatchers = podSetsOnly ? 0 : 8;
                 assertThat("Looks like there were more watchers than custom resources", numWatchers.get(), lessThanOrEqualTo(maximumExpectedNumberOfWatchers));
 
                 int numberOfInformers = 5;

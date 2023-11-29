@@ -88,10 +88,6 @@ public class UserOperatorConfig {
      */
     public static final ConfigParameter<Boolean> ACLS_ADMIN_API_SUPPORTED = new ConfigParameter<>("STRIMZI_ACLS_ADMIN_API_SUPPORTED", BOOLEAN, "true", CONFIG_VALUES);
     /**
-     * Indicates whether KRaft is used in the Kafka cluster
-     */
-    public static final ConfigParameter<Boolean> KRAFT_ENABLED = new ConfigParameter<>("STRIMZI_KRAFT_ENABLED", BOOLEAN, "false", CONFIG_VALUES);
-    /**
      * Timeout for internal operations specified in milliseconds
      */
     public static final ConfigParameter<Long> OPERATION_TIMEOUT_MS = new ConfigParameter<>("STRIMZI_OPERATION_TIMEOUT_MS", LONG, "300000", CONFIG_VALUES);
@@ -172,7 +168,7 @@ public class UserOperatorConfig {
      * @return         Configuration value w.r.t to the key
      */
     @SuppressWarnings("unchecked")
-    public  <T> T get(ConfigParameter<T> value) {
+    public <T> T get(ConfigParameter<T> value) {
         return (T) this.map.get(value.key());
     }
 
@@ -201,7 +197,7 @@ public class UserOperatorConfig {
      * @return  namespace in which the operator runs and creates resources
      */
     public String getNamespace() {
-        return (String) this.map.get(NAMESPACE.key());
+        return get(NAMESPACE);
     }
 
     /**
@@ -284,14 +280,6 @@ public class UserOperatorConfig {
      */
     public boolean isAclsAdminApiSupported() {
         return get(ACLS_ADMIN_API_SUPPORTED);
-    }
-
-    /**
-     * @return Indicates whether KRaft is used in the Kafka cluster or not. When it is used, some APIs might need to be
-     * disabled or used differently.
-     */
-    public boolean isKraftEnabled() {
-        return get(KRAFT_ENABLED);
     }
 
     /**
@@ -382,31 +370,30 @@ public class UserOperatorConfig {
     @Override
     public String toString() {
         return "UserOperatorBuilderConfig{" +
-                "namespace='" + getNamespace() + '\'' +
-                ", reconciliationIntervalMs=" + getReconciliationIntervalMs() +
-                ", kafkaBootstrapServers='" + getKafkaBootstrapServers() + '\'' +
-                ", labels=" + getLabels() +
-                ", caCertSecretName='" + getCaCertSecretName() + '\'' +
-                ", caKeySecretName='" + getCaKeySecretName() + '\'' +
-                ", clusterCaCertSecretName='" + getClusterCaCertSecretName() + '\'' +
-                ", euoKeySecretName='" + getEuoKeySecretName() + '\'' +
-                ", caNamespace='" + getCaNamespaceOrNamespace() + '\'' +
-                ", secretPrefix='" + getSecretPrefix() + '\'' +
-                ", clientsCaValidityDays=" + getClientsCaValidityDays() +
-                ", clientsCaRenewalDays=" + getClientsCaRenewalDays() +
-                ", aclsAdminApiSupported=" + isAclsAdminApiSupported() +
-                ", kraftEnabled=" + isKraftEnabled() +
-                ", scramPasswordLength=" + getScramPasswordLength() +
-                ", maintenanceWindows=" + getMaintenanceWindows() +
-                ", kafkaAdminClientConfiguration=" + getKafkaAdminClientConfiguration() +
-                ", operationTimeoutMs=" + getOperationTimeoutMs() +
-                ", workQueueSize=" + getWorkQueueSize() +
-                ", controllerThreadPoolSize=" + getControllerThreadPoolSize() +
-                ", cacheRefresh=" + getCacheRefresh() +
-                ", batchQueueSize=" + getBatchQueueSize() +
-                ", batchMaxBlockSize=" + getBatchMaxBlockSize() +
-                ", batchMaxBlockTime=" + getBatchMaxBlockTime() +
-                ", userOperationsThreadPoolSize=" + getUserOperationsThreadPoolSize() +
+                "\n\tnamespace='" + getNamespace() + '\'' +
+                "\n\treconciliationIntervalMs=" + getReconciliationIntervalMs() +
+                "\n\tkafkaBootstrapServers='" + getKafkaBootstrapServers() + '\'' +
+                "\n\tlabels=`" + getLabels() + '\'' +
+                "\n\tcaCertSecretName='" + getCaCertSecretName() + '\'' +
+                "\n\tcaKeySecretName='" + getCaKeySecretName() + '\'' +
+                "\n\tclusterCaCertSecretName='" + getClusterCaCertSecretName() + '\'' +
+                "\n\teuoKeySecretName='" + getEuoKeySecretName() + '\'' +
+                "\n\tcaNamespace='" + getCaNamespaceOrNamespace() + '\'' +
+                "\n\tsecretPrefix='" + getSecretPrefix() + '\'' +
+                "\n\tclientsCaValidityDays=" + getClientsCaValidityDays() +
+                "\n\tclientsCaRenewalDays=" + getClientsCaRenewalDays() +
+                "\n\taclsAdminApiSupported=" + isAclsAdminApiSupported() +
+                "\n\tscramPasswordLength=" + getScramPasswordLength() +
+                "\n\tmaintenanceWindows=`" + getMaintenanceWindows() + '\'' +
+                "\n\tkafkaAdminClientConfiguration=`" + getKafkaAdminClientConfiguration() + '\'' +
+                "\n\toperationTimeoutMs=" + getOperationTimeoutMs() +
+                "\n\tworkQueueSize=" + getWorkQueueSize() +
+                "\n\tcontrollerThreadPoolSize=" + getControllerThreadPoolSize() +
+                "\n\tcacheRefresh=" + getCacheRefresh() +
+                "\n\tbatchQueueSize=" + getBatchQueueSize() +
+                "\n\tbatchMaxBlockSize=" + getBatchMaxBlockSize() +
+                "\n\tbatchMaxBlockTime=" + getBatchMaxBlockTime() +
+                "\n\tuserOperationsThreadPoolSize=" + getUserOperationsThreadPoolSize() +
                 '}';
     }
 }

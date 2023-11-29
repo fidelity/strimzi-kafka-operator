@@ -6,6 +6,8 @@ package io.strimzi.operator.topic;
 
 import io.strimzi.operator.topic.zk.Zk;
 import io.strimzi.test.EmbeddedZooKeeper;
+import io.vertx.core.Future;
+import io.vertx.core.Promise;
 import io.vertx.core.Vertx;
 import io.vertx.junit5.Checkpoint;
 import io.vertx.junit5.VertxTestContext;
@@ -14,19 +16,10 @@ import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.BeforeEach;
 
-import java.io.IOException;
-
 public class ZkTopicStoreTest extends TopicStoreTestBase {
-
     private static Vertx vertx;
-
     private EmbeddedZooKeeper zkServer;
-    private Zk zk;
-
-    @Override
-    protected boolean canRunTest() {
-        return false; // test was disabled
-    }
+    private Zk zkClient;
 
     @BeforeAll
     public static void before() {
@@ -39,18 +32,31 @@ public class ZkTopicStoreTest extends TopicStoreTestBase {
     }
 
     @BeforeEach
-    public void setup() throws IOException, InterruptedException {
-        this.zkServer = new EmbeddedZooKeeper();
-        zk = Zk.createSync(vertx, zkServer.getZkConnectString(), 60_000, 10_000);
-        this.store = new ZkTopicStore(zk, "/strimzi/topics");
+    public void setup(VertxTestContext context) throws Exception {
+        zkServer = new EmbeddedZooKeeper();
+        zkClient = Zk.createSync(vertx, zkServer.getZkConnectString(), 60_000, 10_000);
+        String topicsPath = "/strimzi/topics";
+        this.store = new ZkTopicStore(zkClient, topicsPath);
+        // wait for topic store initialization before moving ahead with test execution
+        zkClient.watchChildren(topicsPath, context.succeeding(watchResult -> {
+            zkClient.unwatchChildren(topicsPath);
+            context.completeNow();
+        }));
     }
 
     @AfterEach
     public void teardown(VertxTestContext context) {
-        Checkpoint async = context.checkpoint();
-        zk.disconnect(ar -> async.flag());
-        if (this.zkServer != null) {
-            this.zkServer.close();
-        }
+        Checkpoint zkDisconnected = context.checkpoint();
+
+        Promise<Void> promise = Promise.promise();
+        zkClient.disconnect(result -> promise.complete());
+
+        promise.future().compose(v -> {
+            if (this.zkServer != null) {
+                this.zkServer.close();
+            }
+            zkDisconnected.flag();
+            return Future.succeededFuture();
+        });
     }
 }

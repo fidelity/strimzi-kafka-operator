@@ -17,12 +17,15 @@ import java.util.List;
 public class OlmConfiguration {
     private ExtensionContext extensionContext;
     private String namespaceName;
+    private String namespaceToWatch;
     private String featureGates = Environment.STRIMZI_FEATURE_GATES;
     private String olmAppBundlePrefix = Environment.OLM_APP_BUNDLE_PREFIX;
     private String olmOperatorName = Environment.OLM_OPERATOR_NAME;
+    private String olmOperatorDeploymentNamePrefix = Environment.OLM_OPERATOR_DEPLOYMENT_NAME;
     private String olmSourceName = Environment.OLM_SOURCE_NAME;
     private String olmSourceNamespace = Environment.OLM_SOURCE_NAMESPACE;
-    private String operatorVersion;
+    // Init value is needed due to UWF_FIELD_NOT_INITIALIZED_IN_CONSTRUCTOR
+    private String operatorVersion = "";
     private OlmInstallationStrategy olmInstallationStrategy;
     private String channelName;
     private List<EnvVar> envVars;
@@ -48,6 +51,14 @@ public class OlmConfiguration {
         return namespaceName;
     }
 
+    public void setNamespaceToWatch(String namespaceToWatch) {
+        this.namespaceToWatch = namespaceToWatch;
+    }
+
+    public String getNamespaceToWatch() {
+        return namespaceToWatch;
+    }
+
     public void setOlmInstallationStrategy(OlmInstallationStrategy olmInstallationStrategy) {
         this.olmInstallationStrategy = olmInstallationStrategy == null ? OlmInstallationStrategy.Automatic : olmInstallationStrategy;
     }
@@ -57,7 +68,7 @@ public class OlmConfiguration {
     }
 
     public void setOperatorVersion(String operatorVersion) {
-        this.operatorVersion = operatorVersion == null ? Environment.OLM_OPERATOR_LATEST_RELEASE_VERSION : operatorVersion;
+        this.operatorVersion = operatorVersion != null && operatorVersion.isEmpty() ? Environment.OLM_OPERATOR_LATEST_RELEASE_VERSION : operatorVersion;
     }
 
     public String getOperatorVersion() {
@@ -109,7 +120,7 @@ public class OlmConfiguration {
     }
 
     public String getOlmOperatorDeploymentName() {
-        return olmAppBundlePrefix + "-v" + operatorVersion;
+        return olmOperatorDeploymentNamePrefix + "-v" + operatorVersion;
     }
 
     public String getOlmOperatorName() {

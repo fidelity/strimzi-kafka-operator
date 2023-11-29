@@ -6,19 +6,20 @@ package io.strimzi.operator.cluster.operator.assembly;
 
 import io.fabric8.kubernetes.api.model.ConfigMap;
 import io.fabric8.kubernetes.api.model.LocalObjectReference;
+import io.fabric8.kubernetes.api.model.ResourceRequirements;
 import io.fabric8.kubernetes.api.model.Secret;
 import io.fabric8.kubernetes.api.model.apps.Deployment;
 import io.strimzi.api.kafka.model.CruiseControlResources;
 import io.strimzi.api.kafka.model.Kafka;
 import io.strimzi.api.kafka.model.storage.Storage;
 import io.strimzi.operator.cluster.ClusterOperatorConfig;
-import io.strimzi.operator.cluster.model.Ca;
+import io.strimzi.operator.common.model.Ca;
 import io.strimzi.operator.cluster.model.ClusterCa;
 import io.strimzi.operator.cluster.model.CruiseControl;
 import io.strimzi.operator.cluster.model.ImagePullPolicy;
 import io.strimzi.operator.cluster.model.KafkaVersion;
-import io.strimzi.operator.cluster.model.MetricsAndLoggingUtils;
 import io.strimzi.operator.cluster.model.ModelUtils;
+import io.strimzi.operator.cluster.model.NodeRef;
 import io.strimzi.operator.cluster.operator.resource.ResourceOperatorSupplier;
 import io.strimzi.operator.common.Annotations;
 import io.strimzi.operator.common.Reconciliation;
@@ -36,6 +37,8 @@ import io.vertx.core.Future;
 
 import java.time.Clock;
 import java.util.List;
+import java.util.Map;
+import java.util.Set;
 
 /**
  * Class used for reconciliation of Cruise Control. This class contains both the steps of the Cruise Control
@@ -70,8 +73,9 @@ public class CruiseControlReconciler {
      * @param supplier                  Supplier with Kubernetes Resource Operators
      * @param kafkaAssembly             The Kafka custom resource
      * @param versions                  The supported Kafka versions
-     * @param storage                   The actual storage configuration used by the cluster. This might differ from the
-     *                                  storage configuration configured by the user in the Kafka CR due to un-allowed changes.
+     * @param kafkaBrokerNodes          List of the broker nodes which are part of the Kafka cluster
+     * @param kafkaBrokerStorage        A map with storage configuration used by the Kafka cluster and its broker pools
+     * @param kafkaBrokerResources      A map with resource configuration used by the Kafka cluster and its broker pools
      * @param clusterCa                 The Cluster CA instance
      */
     @SuppressWarnings({"checkstyle:ParameterNumber"})
@@ -81,11 +85,13 @@ public class CruiseControlReconciler {
             ResourceOperatorSupplier supplier,
             Kafka kafkaAssembly,
             KafkaVersion.Lookup versions,
-            Storage storage,
+            Set<NodeRef> kafkaBrokerNodes,
+            Map<String, Storage> kafkaBrokerStorage,
+            Map<String, ResourceRequirements> kafkaBrokerResources,
             ClusterCa clusterCa
     ) {
         this.reconciliation = reconciliation;
-        this.cruiseControl = CruiseControl.fromCrd(reconciliation, kafkaAssembly, versions, storage);
+        this.cruiseControl = CruiseControl.fromCrd(reconciliation, kafkaAssembly, versions, kafkaBrokerNodes, kafkaBrokerStorage, kafkaBrokerResources, supplier.sharedEnvironmentProvider);
         this.clusterCa = clusterCa;
         this.maintenanceWindows = kafkaAssembly.getSpec().getMaintenanceTimeWindows();
         this.operationTimeoutMs = config.getOperationTimeoutMs();
@@ -269,6 +275,9 @@ public class CruiseControlReconciler {
             int caCertGeneration = ModelUtils.caCertGeneration(clusterCa);
             Annotations.annotations(deployment.getSpec().getTemplate()).put(
                     Ca.ANNO_STRIMZI_IO_CLUSTER_CA_CERT_GENERATION, String.valueOf(caCertGeneration));
+            int caKeyGeneration = ModelUtils.caKeyGeneration(clusterCa);
+            Annotations.annotations(deployment.getSpec().getTemplate()).put(
+                    Ca.ANNO_STRIMZI_IO_CLUSTER_CA_KEY_GENERATION, String.valueOf(caKeyGeneration));
 
             return deploymentOperator
                     .reconcile(reconciliation, reconciliation.namespace(), CruiseControlResources.deploymentName(reconciliation.name()), deployment)

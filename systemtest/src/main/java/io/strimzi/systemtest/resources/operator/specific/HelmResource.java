@@ -5,35 +5,26 @@
 package io.strimzi.systemtest.resources.operator.specific;
 
 import io.fabric8.kubernetes.api.model.EnvVar;
-import io.strimzi.systemtest.Constants;
+import io.strimzi.systemtest.TestConstants;
 import io.strimzi.systemtest.Environment;
 import io.strimzi.systemtest.resources.ResourceItem;
 import io.strimzi.systemtest.resources.ResourceManager;
 import io.strimzi.systemtest.utils.kubeUtils.controllers.DeploymentUtils;
 import io.strimzi.systemtest.utils.specific.BridgeUtils;
 import io.strimzi.test.TestUtils;
-import io.strimzi.test.k8s.KubeClusterResource;
 import org.junit.jupiter.api.extension.ExtensionContext;
 
 import java.io.File;
-import java.io.InputStream;
 import java.nio.file.Path;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Stack;
 
-import static io.strimzi.test.k8s.KubeClusterResource.cmdKubeClient;
-
 public class HelmResource implements SpecificResourceType {
 
     public static final String HELM_CHART = TestUtils.USER_PATH + "/../packaging/helm-charts/helm3/strimzi-kafka-operator/";
     public static final String HELM_RELEASE_NAME = "strimzi-systemtests";
-
-    public static final String REQUESTS_MEMORY = "512Mi";
-    public static final String REQUESTS_CPU = "200m";
-    public static final String LIMITS_MEMORY = "512Mi";
-    public static final String LIMITS_CPU = "1000m";
 
     private String namespaceToWatch;
     private String namespaceInstallTo;
@@ -48,7 +39,7 @@ public class HelmResource implements SpecificResourceType {
     }
 
     public void create(ExtensionContext extensionContext) {
-        this.create(extensionContext, Constants.CO_OPERATION_TIMEOUT_DEFAULT, Constants.RECONCILIATION_INTERVAL, null, 1);
+        this.create(extensionContext, TestConstants.CO_OPERATION_TIMEOUT_DEFAULT, TestConstants.RECONCILIATION_INTERVAL, null, 1);
     }
 
     public void create(ExtensionContext extensionContext, long operationTimeout, long reconciliationInterval, List<EnvVar> extraEnvVars, int replicas) {
@@ -79,16 +70,16 @@ public class HelmResource implements SpecificResourceType {
 
         // Additional config
         values.put("image.imagePullPolicy", Environment.OPERATOR_IMAGE_PULL_POLICY);
-        values.put("resources.requests.memory", REQUESTS_MEMORY);
-        values.put("resources.requests.cpu", REQUESTS_CPU);
-        values.put("resources.limits.memory", LIMITS_MEMORY);
-        values.put("resources.limits.cpu", LIMITS_CPU);
+        values.put("resources.requests.memory", TestConstants.CO_REQUESTS_MEMORY);
+        values.put("resources.requests.cpu", TestConstants.CO_REQUESTS_CPU);
+        values.put("resources.limits.memory", TestConstants.CO_LIMITS_MEMORY);
+        values.put("resources.limits.cpu", TestConstants.CO_LIMITS_CPU);
         values.put("logLevelOverride", Environment.STRIMZI_LOG_LEVEL);
         values.put("fullReconciliationIntervalMs", Long.toString(reconciliationInterval));
         values.put("operationTimeoutMs", Long.toString(operationTimeout));
         // As FG is CSV, we need to escape commas for interpretation of helm installation string
         values.put("featureGates", Environment.STRIMZI_FEATURE_GATES.replaceAll(",", "\\\\,"));
-        values.put("watchAnyNamespace", this.namespaceToWatch.equals(Constants.WATCH_ALL_NAMESPACES));
+        values.put("watchAnyNamespace", this.namespaceToWatch.equals(TestConstants.WATCH_ALL_NAMESPACES));
         values.put("replicas", replicas);
 
         if (!this.namespaceToWatch.equals("*") && !this.namespaceToWatch.equals(this.namespaceInstallTo)) {
@@ -106,13 +97,8 @@ public class HelmResource implements SpecificResourceType {
         }
 
         Path pathToChart = new File(HELM_CHART).toPath();
-        String oldNamespace = KubeClusterResource.getInstance().setNamespace("kube-system");
-        InputStream helmAccountAsStream = HelmResource.class.getClassLoader().getResourceAsStream("helm/helm-service-account.yaml");
-        String helmServiceAccount = TestUtils.readResource(helmAccountAsStream);
-        cmdKubeClient().applyContent(helmServiceAccount);
-        KubeClusterResource.getInstance().setNamespace(oldNamespace);
-        ResourceManager.helmClient().install(pathToChart, HELM_RELEASE_NAME, values);
-        DeploymentUtils.waitForDeploymentReady(oldNamespace, ResourceManager.getCoDeploymentName());
+        ResourceManager.helmClient().namespace(namespaceInstallTo).install(pathToChart, HELM_RELEASE_NAME, values);
+        DeploymentUtils.waitForDeploymentReady(namespaceInstallTo, ResourceManager.getCoDeploymentName());
     }
 
     /**
@@ -134,6 +120,8 @@ public class HelmResource implements SpecificResourceType {
 
     /**
      * Delete CO deployed via helm chart.
+     * NOTE: CRDs are not deleted as part of the uninstallation:
+     * <a href="https://github.com/helm/community/blob/f9e06c16d89ccea1bea77c01a6a96ae3b309f823/architecture/crds.md#deleting-crds">CRDs architecture in Helm</a>
      */
     private void deleteClusterOperator() {
         ResourceManager.helmClient().delete(namespaceInstallTo, HELM_RELEASE_NAME);

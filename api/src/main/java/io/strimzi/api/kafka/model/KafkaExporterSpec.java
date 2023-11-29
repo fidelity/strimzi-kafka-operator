@@ -26,16 +26,19 @@ import java.util.Map;
 )
 @JsonInclude(JsonInclude.Include.NON_DEFAULT)
 @JsonPropertyOrder({
-    "image", "groupRegex",
-    "topicRegex", "resources", "logging",
+    "image", "groupRegex", "topicRegex", 
+    "groupExcludeRegex", "topicExcludeRegex",
+    "resources", "logging",
     "enableSaramaLogging", "template"})
 @EqualsAndHashCode
-public class KafkaExporterSpec implements UnknownPropertyPreserving, Serializable {
+public class KafkaExporterSpec implements HasLivenessProbe, HasReadinessProbe, UnknownPropertyPreserving, Serializable {
     private static final long serialVersionUID = 1L;
 
     private String image;
     private String groupRegex = ".*";
     private String topicRegex = ".*";
+    private String topicExcludeRegex;
+    private String groupExcludeRegex;
 
     private ResourceRequirements resources;
     private Probe livenessProbe;
@@ -75,6 +78,26 @@ public class KafkaExporterSpec implements UnknownPropertyPreserving, Serializabl
 
     public void setTopicRegex(String topicRegex) {
         this.topicRegex = topicRegex;
+    }
+
+    @Description("Regular expression to specify which consumer groups to exclude.")
+    @JsonInclude(JsonInclude.Include.NON_DEFAULT)
+    public String getGroupExcludeRegex() {
+        return groupExcludeRegex;
+    }
+
+    public void setGroupExcludeRegex(String groupExcludeRegex) {  
+        this.groupExcludeRegex = groupExcludeRegex;
+    }
+
+    @Description("Regular expression to specify which topics to exclude.")
+    @JsonInclude(JsonInclude.Include.NON_DEFAULT)
+    public String getTopicExcludeRegex() {
+        return topicExcludeRegex;
+    }
+
+    public void setTopicExcludeRegex(String topicExcludeRegex) {
+        this.topicExcludeRegex = topicExcludeRegex;
     }
 
     @Description("Enable Sarama logging, a Go client library used by the Kafka Exporter.")

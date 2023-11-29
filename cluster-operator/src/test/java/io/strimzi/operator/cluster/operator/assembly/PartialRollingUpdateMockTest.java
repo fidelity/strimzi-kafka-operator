@@ -15,19 +15,19 @@ import io.strimzi.api.kafka.model.KafkaResources;
 import io.strimzi.api.kafka.model.StrimziPodSet;
 import io.strimzi.api.kafka.model.listener.arraylistener.GenericKafkaListenerBuilder;
 import io.strimzi.api.kafka.model.listener.arraylistener.KafkaListenerType;
-import io.strimzi.operator.PlatformFeaturesAvailability;
+import io.strimzi.operator.cluster.PlatformFeaturesAvailability;
 import io.strimzi.operator.cluster.ClusterOperatorConfig;
 import io.strimzi.operator.cluster.KafkaVersionTestUtils;
 import io.strimzi.operator.cluster.ResourceUtils;
-import io.strimzi.operator.cluster.model.Ca;
+import io.strimzi.operator.common.model.Ca;
 import io.strimzi.operator.cluster.model.CertUtils;
 import io.strimzi.operator.cluster.model.ClusterCa;
 import io.strimzi.operator.cluster.model.KafkaVersion;
 import io.strimzi.operator.cluster.model.PodSetUtils;
-import io.strimzi.operator.cluster.operator.resource.PodRevision;
+import io.strimzi.operator.cluster.model.PodRevision;
 import io.strimzi.operator.cluster.operator.resource.ResourceOperatorSupplier;
 import io.strimzi.operator.common.Annotations;
-import io.strimzi.operator.common.PasswordGenerator;
+import io.strimzi.operator.common.model.PasswordGenerator;
 import io.strimzi.operator.common.Reconciliation;
 import io.strimzi.operator.common.model.Labels;
 import io.strimzi.operator.common.operator.MockCertManager;
@@ -140,7 +140,7 @@ public class PartialRollingUpdateMockTest {
         PlatformFeaturesAvailability pfa = new PlatformFeaturesAvailability(false, KubernetesVersion.MINIMAL_SUPPORTED_VERSION);
         supplier = supplier(client, pfa);
 
-        podSetController = new StrimziPodSetController(NAMESPACE, Labels.EMPTY, supplier.kafkaOperator, supplier.connectOperator, supplier.mirrorMaker2Operator, supplier.strimziPodSetOperator, supplier.podOperations, supplier.metricsProvider, ClusterOperatorConfig.DEFAULT_POD_SET_CONTROLLER_WORK_QUEUE_SIZE);
+        podSetController = new StrimziPodSetController(NAMESPACE, Labels.EMPTY, supplier.kafkaOperator, supplier.connectOperator, supplier.mirrorMaker2Operator, supplier.strimziPodSetOperator, supplier.podOperations, supplier.metricsProvider, Integer.parseInt(ClusterOperatorConfig.POD_SET_CONTROLLER_WORK_QUEUE_SIZE.defaultValue()));
         podSetController.start();
 
         kco = new KafkaAssemblyOperator(vertx, pfa, new MockCertManager(), new PasswordGenerator(10, "a", "a"),
@@ -198,13 +198,13 @@ public class PartialRollingUpdateMockTest {
             context.verify(() -> assertThat(ar.succeeded(), is(true)));
 
             StrimziPodSet kafkaPodSet = supplier.strimziPodSetOperator.client().inNamespace(NAMESPACE).withName(KafkaResources.kafkaStatefulSetName(CLUSTER_NAME)).get();
-            List<Pod> kafkaPodsFromPodSet = PodSetUtils.mapsToPods(kafkaPodSet.getSpec().getPods());
+            List<Pod> kafkaPodsFromPodSet = PodSetUtils.podSetToPods(kafkaPodSet);
 
             for (int i = 0; i <= 4; i++) {
                 int finalI = i;
 
                 Pod pod = client.pods().inNamespace(NAMESPACE).withName(KafkaResources.kafkaPodName(CLUSTER_NAME, i)).get();
-                String podRrevision = pod.getMetadata().getAnnotations().get(PodRevision.STRIMZI_REVISION_ANNOTATION);
+                String podRevision = pod.getMetadata().getAnnotations().get(PodRevision.STRIMZI_REVISION_ANNOTATION);
                 String spsRevision = kafkaPodsFromPodSet
                         .stream()
                         .filter(p -> KafkaResources.kafkaPodName(CLUSTER_NAME, finalI).equals(p.getMetadata().getName()))
@@ -214,7 +214,7 @@ public class PartialRollingUpdateMockTest {
                         .getAnnotations()
                         .get(PodRevision.STRIMZI_REVISION_ANNOTATION);
 
-                context.verify(() -> assertThat("Pod " + finalI + " had unexpected revision", podRrevision, is(spsRevision)));
+                context.verify(() -> assertThat("Pod " + finalI + " had unexpected revision", podRevision, is(spsRevision)));
             }
             async.flag();
         });
@@ -264,13 +264,13 @@ public class PartialRollingUpdateMockTest {
             context.verify(() -> assertThat(ar.succeeded(), is(true)));
 
             StrimziPodSet zooPodSet = supplier.strimziPodSetOperator.client().inNamespace(NAMESPACE).withName(KafkaResources.zookeeperStatefulSetName(CLUSTER_NAME)).get();
-            List<Pod> zooPodsFromPodSet = PodSetUtils.mapsToPods(zooPodSet.getSpec().getPods());
+            List<Pod> zooPodsFromPodSet = PodSetUtils.podSetToPods(zooPodSet);
 
             for (int i = 0; i <= 2; i++) {
                 int finalI = i;
 
                 Pod pod = client.pods().inNamespace(NAMESPACE).withName(KafkaResources.zookeeperPodName(CLUSTER_NAME, i)).get();
-                String podRrevision = pod.getMetadata().getAnnotations().get(PodRevision.STRIMZI_REVISION_ANNOTATION);
+                String podRevision = pod.getMetadata().getAnnotations().get(PodRevision.STRIMZI_REVISION_ANNOTATION);
                 String spsRevision = zooPodsFromPodSet
                         .stream()
                         .filter(p -> KafkaResources.zookeeperPodName(CLUSTER_NAME, finalI).equals(p.getMetadata().getName()))
@@ -280,7 +280,7 @@ public class PartialRollingUpdateMockTest {
                         .getAnnotations()
                         .get(PodRevision.STRIMZI_REVISION_ANNOTATION);
 
-                context.verify(() -> assertThat("Pod " + finalI + " had unexpected revision", podRrevision, is(spsRevision)));
+                context.verify(() -> assertThat("Pod " + finalI + " had unexpected revision", podRevision, is(spsRevision)));
             }
             async.flag();
         });

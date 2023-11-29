@@ -4,29 +4,19 @@
  */
 package io.strimzi.systemtest.parallel;
 
-import io.strimzi.systemtest.Constants;
+import io.strimzi.systemtest.TestConstants;
 import io.strimzi.systemtest.Environment;
 import io.strimzi.systemtest.listeners.ExecutionListener;
 import io.strimzi.systemtest.resources.kubernetes.NetworkPolicyResource;
 import io.strimzi.systemtest.utils.StUtils;
-import io.strimzi.test.TestUtils;
 import io.strimzi.test.k8s.KubeClusterResource;
 import io.strimzi.test.logs.CollectorElement;
 import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
 import org.junit.jupiter.api.extension.ExtensionContext;
 
-import java.io.File;
-import java.util.ArrayList;
 import java.util.Collections;
-import java.util.HashMap;
-import java.util.HashSet;
-import java.util.List;
-import java.util.Locale;
-import java.util.Map;
-import java.util.Set;
 import java.util.concurrent.atomic.AtomicInteger;
-import java.util.function.Function;
 
 /**
  * This class contains static information (additional namespaces will are needed for test suite) before the execution of @BeforeAll.
@@ -35,118 +25,59 @@ import java.util.function.Function;
 public class TestSuiteNamespaceManager {
 
     private static final Logger LOGGER = LogManager.getLogger(TestSuiteNamespaceManager.class);
-    private static final String ST_TESTS_PATH = TestUtils.USER_PATH + "/src/test/java/io/strimzi/systemtest";
-    private static final Function<List<String>, List<String>> SUITE_NAMESPACES = (additionalSuiteNamespaces) -> {
-        if (Environment.isNamespaceRbacScope()) {
-            // rbac namespace we are gonna use INFRA_NAMESPACE (everything is in sequential execution)
-            return Collections.singletonList(Constants.INFRA_NAMESPACE);
-        } else {
-            return additionalSuiteNamespaces;
-        }
-    };
 
     private static AtomicInteger counterOfNamespaces;
     private static TestSuiteNamespaceManager instance;
 
-    private List<String> stParallelSuitesNames;
-    /**
-     * Map @code{mapOfAdditionalNamespaces} which contains all additional namespaces for each test suite. It also
-     * uses @code{SUITE_NAMESPACES} function, which returns main namespace in case we have RBAC policy set to NAMESPACE
-     * instead of CLUSTER. Otherwise it returns list of additional namespaces.
-     */
-    private Map<String, List<String>> mapOfAdditionalNamespaces;
-
     public synchronized static TestSuiteNamespaceManager getInstance() {
         if (instance == null) {
             instance = new TestSuiteNamespaceManager();
-            instance.constructMapOfAdditionalNamespaces();
             counterOfNamespaces = new AtomicInteger(0);
         }
         return instance;
     }
 
     /**
-     * ListStFilesNames list all files, which has "ST.java" suffix. This algorithm does it with O(n) time complexity
-     * using tail recursion.
+     * Creates a test suite namespace {@code Environment.TEST_SUITE_NAMESPACE} if conditions are met (e.g., the test class
+     * contains {@link io.strimzi.systemtest.annotations.IsolatedTest} or {@link io.strimzi.systemtest.annotations.ParallelTest}
+     * test cases we will create such namespace, otherwise not). When we have test class, which only contains
+     *  {@link io.strimzi.systemtest.annotations.ParallelNamespaceTest}, which creates its own namespace it does not
+     *  make sense to provide another auxiliary namespace (because it will be not used) and thus we are skip such creation.
      *
-     * @param stFiles if file we add to the list @code{stParallelSuitesNames}, otherwise it's directory and we recursively go deeper
-     *             inside tree structure
+     * @param extensionContext      extension context for test class
      */
-    private void retrieveAllSystemTestsNames(File stFiles) {
-        // adding to the list of all namespaces and also eliminate @IsolatedSuite classes, because these classes could
-        // use Constants.INFRA_NAMESPACE for their execution without any auxiliary.
-        if (stFiles.getName().endsWith(Constants.ST + ".java") && !stFiles.getName().contains(Constants.ISOLATED)) {
-            this.stParallelSuitesNames.add(stFiles.getName());
-        }
+    public void createTestSuiteNamespace(ExtensionContext extensionContext) {
+        final String testSuiteName = extensionContext.getRequiredTestClass().getName();
 
-        File[] children = stFiles.listFiles();
-        // children is .*ST.java
-        if (children == null) {
-            return;
-        }
-        // call recursively all children (directories)
-        for (File child : children) {
-            retrieveAllSystemTestsNames(child);
+        if (ExecutionListener.hasSuiteParallelOrIsolatedTest(extensionContext)) {
+            // if RBAC is enabled we don't run tests in parallel mode and with that said we don't create another namespaces
+            if (!Environment.isNamespaceRbacScope()) {
+                KubeClusterResource.getInstance().createNamespace(CollectorElement.createCollectorElement(testSuiteName), Environment.TEST_SUITE_NAMESPACE);
+                NetworkPolicyResource.applyDefaultNetworkPolicySettings(extensionContext, Collections.singletonList(Environment.TEST_SUITE_NAMESPACE));
+                StUtils.copyImagePullSecrets(Environment.TEST_SUITE_NAMESPACE);
+            } else {
+                LOGGER.info("We are not gonna create additional namespace: {}, because test suite: {} does not " +
+                        "contains @ParallelTest or @IsolatedTest.", Environment.TEST_SUITE_NAMESPACE, testSuiteName);
+            }
         }
     }
 
     /**
-     * Dynamic generation of all auxiliary @code{mapOfAdditionalNamespaces} for @ParallelSuites using method
-     * {@link #retrieveAllSystemTestsNames(File)}}. Execution is decomposed in three steps:
-     *  1. Scan all test directory
-     *  2. Post-processing of test suite names adding '-' between all capitals.
-     *  3. Adding auxiliary namespaces to the map @code{mapOfAdditionalNamespaces}
+     * Analogically, inverse method to {@link #createTestSuiteNamespace(ExtensionContext)}.
+     *
+     * @param extensionContext      extension context for test class
      */
-    private void constructMapOfAdditionalNamespaces() {
-        this.mapOfAdditionalNamespaces = new HashMap<>();
+    public void deleteTestSuiteNamespace(ExtensionContext extensionContext) {
+        if (ExecutionListener.hasSuiteParallelOrIsolatedTest(extensionContext)) {
+            // if RBAC is enabled we don't run tests in parallel mode and with that said we don't create another namespaces
+            if (!Environment.isNamespaceRbacScope()) {
+                final String testSuiteName = extensionContext.getRequiredTestClass().getName();
 
-        // 1. fetch all @ParallelSuite names
-        this.stParallelSuitesNames = new ArrayList<>(27); // eliminate un-necessary re-allocation
-        retrieveAllSystemTestsNames(new File(ST_TESTS_PATH));
-
-        // 2. for each suite put generated namespace
-        for (final String testSuiteName : this.stParallelSuitesNames) {
-            final String testSuiteWithoutJavaSuffix = testSuiteName.split("\\.")[0];
-
-            // post-processing each and append "-"
-            final StringBuilder testSuiteNamespace = new StringBuilder();
-            for (int i = 0; i < testSuiteWithoutJavaSuffix.length(); i++) {
-                char c = testSuiteWithoutJavaSuffix.charAt(i);
-                if (Character.isUpperCase(c) && i != 0 && i <= testSuiteWithoutJavaSuffix.length() - 2) {
-                    testSuiteNamespace.append("-");
-                }
-                testSuiteNamespace.append(c);
-            }
-            this.mapOfAdditionalNamespaces.put(testSuiteWithoutJavaSuffix, SUITE_NAMESPACES.apply(Collections.singletonList(testSuiteNamespace.toString().toLowerCase(Locale.ROOT))));
-        }
-    }
-
-    public void createAdditionalNamespaces(ExtensionContext extensionContext) {
-        final String requiredClassName = extensionContext.getRequiredTestClass().getSimpleName();
-        final List<String> namespaces = this.mapOfAdditionalNamespaces.get(requiredClassName);
-        final String testSuite = extensionContext.getRequiredTestClass().getName();
-
-        if (namespaces != null) {
-            LOGGER.debug("Content of the test suite namespaces map:\n" + this.mapOfAdditionalNamespaces.toString());
-            LOGGER.debug("Test suite `" + requiredClassName + "` creates these additional namespaces:" + namespaces.toString());
-
-            for (String namespaceName : namespaces) {
-                if (namespaceName.equals(Constants.INFRA_NAMESPACE)) {
-                    continue;
-                }
-
-                if (ExecutionListener.hasSuiteParallelOrIsolatedTest(extensionContext)) {
-                    KubeClusterResource.getInstance().createNamespace(CollectorElement.createCollectorElement(testSuite), namespaceName);
-                    NetworkPolicyResource.applyDefaultNetworkPolicySettings(extensionContext, Collections.singletonList(namespaceName));
-                    if (Environment.SYSTEM_TEST_STRIMZI_IMAGE_PULL_SECRET != null && !Environment.SYSTEM_TEST_STRIMZI_IMAGE_PULL_SECRET.isEmpty()) {
-                        StUtils.copyImagePullSecret(namespaceName);
-                    }
-                } else {
-                    LOGGER.info("We are not gonna create additional namespace: {}, because test suite: {} does not " +
-                        "contains @ParallelTest or @IsolatedTest.", namespaceName, requiredClassName);
-                }
+                LOGGER.info("Deleting Namespace: {} for TestSuite: {}", Environment.TEST_SUITE_NAMESPACE, StUtils.removePackageName(testSuiteName));
+                KubeClusterResource.getInstance().deleteNamespace(CollectorElement.createCollectorElement(testSuiteName), Environment.TEST_SUITE_NAMESPACE);
             }
         }
+
     }
 
     /**
@@ -158,7 +89,7 @@ public class TestSuiteNamespaceManager {
      * @param extensionContext unifier (id), which distinguished all other test cases
      */
     public void createParallelNamespace(ExtensionContext extensionContext) {
-        final String testCase = extensionContext.getRequiredTestMethod().getName();
+        final String testCaseName = extensionContext.getRequiredTestMethod().getName();
 
         // if 'parallel namespace test' we are gonna create namespace
         if (StUtils.isParallelNamespaceTest(extensionContext)) {
@@ -166,30 +97,14 @@ public class TestSuiteNamespaceManager {
             if (!Environment.isNamespaceRbacScope()) {
                 final String namespaceTestCase = "namespace-" + counterOfNamespaces.getAndIncrement();
 
-                extensionContext.getStore(ExtensionContext.Namespace.GLOBAL).put(Constants.NAMESPACE_KEY, namespaceTestCase);
+                extensionContext.getStore(ExtensionContext.Namespace.GLOBAL).put(TestConstants.NAMESPACE_KEY, namespaceTestCase);
                 // create namespace by
-                LOGGER.info("Creating namespace:{} for test case:{}", namespaceTestCase, testCase);
+                LOGGER.info("Creating Namespace: {} for TestCase: {}", namespaceTestCase, StUtils.removePackageName(testCaseName));
 
-                KubeClusterResource.getInstance().createNamespace(CollectorElement.createCollectorElement(extensionContext.getRequiredTestClass().getName(), extensionContext.getRequiredTestMethod().getName()), namespaceTestCase);
+                KubeClusterResource.getInstance().createNamespace(CollectorElement.createCollectorElement(extensionContext.getRequiredTestClass().getName(), testCaseName), namespaceTestCase);
                 NetworkPolicyResource.applyDefaultNetworkPolicySettings(extensionContext, Collections.singletonList(namespaceTestCase));
-                if (Environment.SYSTEM_TEST_STRIMZI_IMAGE_PULL_SECRET != null && !Environment.SYSTEM_TEST_STRIMZI_IMAGE_PULL_SECRET.isEmpty()) {
-                    StUtils.copyImagePullSecret(namespaceTestCase);
-                }
+                StUtils.copyImagePullSecrets(namespaceTestCase);
             }
-        }
-    }
-
-    public void deleteAdditionalNamespaces(ExtensionContext extensionContext) {
-        CollectorElement collectorElement = CollectorElement.createCollectorElement(extensionContext.getRequiredTestClass().getName());
-
-        if (KubeClusterResource.getMapWithSuiteNamespaces().get(collectorElement) != null) {
-            Set<String> namespacesToDelete = new HashSet<>(KubeClusterResource.getMapWithSuiteNamespaces().get(collectorElement));
-            // delete namespaces for specific test suite (we can not delete in parallel because of ConcurrentModificationException)
-            namespacesToDelete.forEach(ns -> {
-                if (!ns.equals(Constants.INFRA_NAMESPACE)) {
-                    KubeClusterResource.getInstance().deleteNamespace(collectorElement, ns);
-                }
-            });
         }
     }
 
@@ -203,15 +118,12 @@ public class TestSuiteNamespaceManager {
         if (StUtils.isParallelNamespaceTest(extensionContext)) {
             // if RBAC is enable we don't run tests in parallel mode and with that said we don't create another namespaces
             if (!Environment.isNamespaceRbacScope()) {
-                final String namespaceToDelete = extensionContext.getStore(ExtensionContext.Namespace.GLOBAL).get(Constants.NAMESPACE_KEY).toString();
+                final String namespaceToDelete = extensionContext.getStore(ExtensionContext.Namespace.GLOBAL).get(TestConstants.NAMESPACE_KEY).toString();
+                final String testCaseName = extensionContext.getRequiredTestMethod().getName();
 
-                LOGGER.info("Deleting namespace:{} for test case:{}", namespaceToDelete, extensionContext.getDisplayName());
-                KubeClusterResource.getInstance().deleteNamespace(CollectorElement.createCollectorElement(extensionContext.getRequiredTestClass().getName(), extensionContext.getRequiredTestMethod().getName()), namespaceToDelete);
+                LOGGER.info("Deleting Namespace: {} for TestCase: {}", namespaceToDelete, StUtils.removePackageName(testCaseName));
+                KubeClusterResource.getInstance().deleteNamespace(CollectorElement.createCollectorElement(extensionContext.getRequiredTestClass().getName(), testCaseName), namespaceToDelete);
             }
         }
-    }
-
-    public Map<String, List<String>> getMapOfAdditionalNamespaces() {
-        return mapOfAdditionalNamespaces;
     }
 }

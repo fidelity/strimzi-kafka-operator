@@ -6,7 +6,7 @@ package io.strimzi.systemtest.kafkaclients.clientproperties;
 
 import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 import io.fabric8.kubernetes.api.model.Secret;
-import io.strimzi.systemtest.Constants;
+import io.strimzi.systemtest.TestConstants;
 import io.strimzi.systemtest.resources.ResourceManager;
 import io.strimzi.test.TestUtils;
 import io.strimzi.test.executor.Exec;
@@ -111,7 +111,7 @@ abstract public class AbstractKafkaClientProperties<C extends AbstractKafkaClien
 
         public T withSaslJassConfig(String clientId, String clientSecretName, String oauthTokenEndpointUri) {
             if (clientId.isEmpty() || clientSecretName.isEmpty() || oauthTokenEndpointUri.isEmpty()) {
-                throw new InvalidParameterException("You do not specify client-id, client-secret name or oauth-token-endpoint-uri inside kafka client!");
+                throw new InvalidParameterException("You do not specify client-id, client-secret name or oauth-token-endpoint-uri inside Kafka client!");
             }
 
             this.properties.setProperty(SaslConfigs.SASL_JAAS_CONFIG,
@@ -275,7 +275,7 @@ abstract public class AbstractKafkaClientProperties<C extends AbstractKafkaClien
         keystore.delete(); // Note horrible race condition, but this is only for testing
         // RANDFILE=/tmp/.rnd openssl pkcs12 -export -in $3 -inkey $4 -name $HOSTNAME -password pass:$2 -out $1
         // The following code is needed to avoid race-condition which we see from time to time
-        TestUtils.waitFor("client-keystore readiness", Constants.GLOBAL_POLL_INTERVAL, Constants.CO_OPERATION_TIMEOUT_MEDIUM,
+        TestUtils.waitFor("client-keystore readiness", TestConstants.GLOBAL_POLL_INTERVAL, TestConstants.CO_OPERATION_TIMEOUT_MEDIUM,
             () -> Exec.exec("openssl",
                 "pkcs12",
                 "-export",
@@ -294,12 +294,12 @@ abstract public class AbstractKafkaClientProperties<C extends AbstractKafkaClien
     private static void importKeycloakCertificateToTruststore(Properties clientProperties) throws IOException {
 
         String responseKeycloak = Exec.exec("openssl", "s_client", "-showcerts", "-connect",
-            ResourceManager.kubeClient().getNodeAddress() + ":" + Constants.HTTPS_KEYCLOAK_DEFAULT_NODE_PORT).out();
+            ResourceManager.kubeClient().getNodeAddress() + ":" + TestConstants.HTTPS_KEYCLOAK_DEFAULT_NODE_PORT).out();
         Matcher matcher = Pattern.compile("-----(?s)(.*)-----").matcher(responseKeycloak);
 
         if (matcher.find()) {
             String keycloakCertificateData = matcher.group(0);
-            LOGGER.info("Keycloak cert is:{}\n", keycloakCertificateData);
+            LOGGER.info("Keycloak cert is: {}\n", keycloakCertificateData);
 
             LOGGER.info("Creating keycloak.crt file");
             File keycloakCertFile = Files.createTempFile("keycloak", ".crt").toFile();

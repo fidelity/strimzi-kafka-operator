@@ -29,9 +29,9 @@ import io.strimzi.certs.CertAndKey;
 import io.strimzi.certs.CertManager;
 import io.strimzi.certs.IpAndDnsValidation;
 import io.strimzi.certs.Subject;
-import io.strimzi.operator.cluster.ClusterOperator;
-import io.strimzi.operator.common.PasswordGenerator;
+import io.strimzi.operator.common.model.PasswordGenerator;
 import io.strimzi.operator.common.Reconciliation;
+import io.strimzi.operator.common.model.Ca;
 
 /**
  * Represents the Cluster CA
@@ -93,7 +93,7 @@ public class ClusterCa extends Ca {
         super(reconciliation, certManager, passwordGenerator,
                 "cluster-ca",
                 AbstractModel.clusterCaCertSecretName(clusterName),
-                forceRenewal(clusterCaCert, clusterCaKey, "cluster-ca.key"),
+                clusterCaCert,
                 AbstractModel.clusterCaKeySecretName(clusterName),
                 clusterCaKey, validityDays, renewalDays, generateCa, policy);
         this.clusterName = clusterName;
@@ -120,7 +120,7 @@ public class ClusterCa extends Ca {
                 entityUserOperatorSecret = secret;
             } else if (KafkaResources.zookeeperSecretName(clusterName).equals(name)) {
                 zkNodesSecret = secret;
-            } else if (ClusterOperator.secretName(clusterName).equals(name)) {
+            } else if (KafkaResources.secretName(clusterName).equals(name)) {
                 clusterOperatorSecret = secret;
             } else if (KafkaExporterResources.secretName(clusterName).equals(name)) {
                 kafkaExporterSecret = secret;
@@ -169,7 +169,7 @@ public class ClusterCa extends Ca {
         LOGGER.debugCr(reconciliation, "{}: Reconciling Cruise Control certificates", this);
         return maybeCopyOrGenerateCerts(
             reconciliation,
-            List.of(new NodeRef("cruise-control", 0)),
+            Set.of(new NodeRef("cruise-control", 0, null, false, false)),
             subjectFn,
             cruiseControlSecret,
             isMaintenanceTimeWindowsSatisfied);
@@ -178,7 +178,7 @@ public class ClusterCa extends Ca {
     protected Map<String, CertAndKey> generateZkCerts(
             String namespace,
             String crName,
-            List<NodeRef> nodes,
+            Set<NodeRef> nodes,
             boolean isMaintenanceTimeWindowsSatisfied
     ) throws IOException {
         DnsNameGenerator zkDnsGenerator = DnsNameGenerator.of(namespace, KafkaResources.zookeeperServiceName(crName));
@@ -192,6 +192,7 @@ public class ClusterCa extends Ca {
             subject.addDnsName(String.format("%s.%s", KafkaResources.zookeeperServiceName(crName), namespace));
             subject.addDnsName(zkDnsGenerator.serviceDnsNameWithoutClusterDomain());
             subject.addDnsName(zkDnsGenerator.serviceDnsName());
+            subject.addDnsName(node.podName());
             subject.addDnsName(DnsNameGenerator.podDnsName(namespace, KafkaResources.zookeeperHeadlessServiceName(crName), node.podName()));
             subject.addDnsName(DnsNameGenerator.podDnsNameWithoutClusterDomain(namespace, KafkaResources.zookeeperHeadlessServiceName(crName), node.podName()));
             subject.addDnsName(zkDnsGenerator.wildcardServiceDnsNameWithoutClusterDomain());
@@ -213,7 +214,7 @@ public class ClusterCa extends Ca {
     protected Map<String, CertAndKey> generateBrokerCerts(
             String namespace,
             String crName,
-            List<NodeRef> nodes,
+            Set<NodeRef> nodes,
             Set<String> externalBootstrapAddresses,
             Map<Integer, Set<String>> externalAddresses,
             boolean isMaintenanceTimeWindowsSatisfied
@@ -229,29 +230,35 @@ public class ClusterCa extends Ca {
             subject.addDnsName(DnsNameGenerator.podDnsName(namespace, KafkaResources.brokersServiceName(crName), node.podName()));
             subject.addDnsName(DnsNameGenerator.podDnsNameWithoutClusterDomain(namespace, KafkaResources.brokersServiceName(crName), node.podName()));
 
-            if (externalBootstrapAddresses != null)   {
-                for (String dnsName : externalBootstrapAddresses) {
-                    if (IpAndDnsValidation.isValidIpAddress(dnsName))   {
-                        subject.addIpAddress(dnsName);
-                    } else {
-                        subject.addDnsName(dnsName);
+            // Controller-only nodes do not have the SANs for external listeners.
+            // That helps us to avoid unnecessary rolling updates when the SANs change
+            if (node.broker())    {
+                if (externalBootstrapAddresses != null) {
+                    for (String dnsName : externalBootstrapAddresses) {
+                        if (IpAndDnsValidation.isValidIpAddress(dnsName)) {
+                            subject.addIpAddress(dnsName);
+                        } else {
+                            subject.addDnsName(dnsName);
+                        }
                     }
                 }
-            }
 
-            if (externalAddresses.get(node.nodeId()) != null)   {
-                for (String dnsName : externalAddresses.get(node.nodeId())) {
-                    if (IpAndDnsValidation.isValidIpAddress(dnsName))   {
-                        subject.addIpAddress(dnsName);
-                    } else {
-                        subject.addDnsName(dnsName);
+                if (externalAddresses.get(node.nodeId()) != null) {
+                    for (String dnsName : externalAddresses.get(node.nodeId())) {
+                        if (IpAndDnsValidation.isValidIpAddress(dnsName)) {
+                            subject.addIpAddress(dnsName);
+                        } else {
+                            subject.addDnsName(dnsName);
+                        }
                     }
                 }
             }
 
             return subject.build();
         };
+
         LOGGER.debugCr(reconciliation, "{}: Reconciling kafka broker certificates", this);
+
         return maybeCopyOrGenerateCerts(
             reconciliation,
             nodes,
@@ -284,7 +291,7 @@ public class ClusterCa extends Ca {
      * @param nodes                                 List of nodes for which the certificates should be generated
      * @param subjectFn                             Function to generate certificate subject for given node / pod
      * @param secret                                Secret with certificates
-     * @param isMaintenanceTimeWindowsSatisfied     Flag indicating if we are inside an maintenance window or not
+     * @param isMaintenanceTimeWindowsSatisfied     Flag indicating if we are inside a maintenance window or not
      *
      * @return  Returns map with node certificates which can be used to create or update the certificate secret
      *
@@ -292,12 +299,12 @@ public class ClusterCa extends Ca {
      */
     /* test */ Map<String, CertAndKey> maybeCopyOrGenerateCerts(
             Reconciliation reconciliation,
-            List<NodeRef> nodes,
+            Set<NodeRef> nodes,
             Function<NodeRef, Subject> subjectFn,
             Secret secret,
             boolean isMaintenanceTimeWindowsSatisfied
     ) throws IOException {
-        // Maps for storing the certificates => will be used in the new or updated secret. This map is filled in in this method and returned at the end.
+        // Maps for storing the certificates => will be used in the new or updated secret. This map is filled in this method and returned at the end.
         Map<String, CertAndKey> certs = new HashMap<>();
 
         // Temp files used when we need to generate new certificates
@@ -314,6 +321,7 @@ public class ClusterCa extends Ca {
                     && secret != null && secret.getData() != null // Secret exists and has some data
                     && secretEntryExists(secret, podName, SecretEntry.CRT) // The secret has the public key for this pod
                     && secretEntryExists(secret, podName, SecretEntry.KEY) // The secret has the private key for this pod
+                    && !hasCaCertGenerationChanged(secret) // The generation on the Secret is the same as the CA has
             )   {
                 // A certificate for this node already exists, so we will try to reuse it
                 LOGGER.debugCr(reconciliation, "Certificate for node {} already exists", node);
@@ -483,7 +491,7 @@ public class ClusterCa extends Ca {
      * @return  The name of the secret entry
      */
     public static String secretEntryNameForPod(String podName, SecretEntry entry) {
-        return podName + entry.suffix;
+        return podName + entry.getSuffix();
     }
 
     /**

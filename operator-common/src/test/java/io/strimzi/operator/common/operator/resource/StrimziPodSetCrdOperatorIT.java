@@ -48,7 +48,7 @@ public class StrimziPodSetCrdOperatorIT extends AbstractCustomResourceOperatorIT
 
     @Override
     protected StrimziPodSetOperator operator() {
-        return new StrimziPodSetOperator(vertx, client, 10_000L);
+        return new StrimziPodSetOperator(vertx, client);
     }
 
     @Override
@@ -66,6 +66,7 @@ public class StrimziPodSetCrdOperatorIT extends AbstractCustomResourceOperatorIT
         return "strimzipodset-crd-it-namespace";
     }
 
+    @SuppressWarnings("unchecked")
     @Override
     protected StrimziPodSet getResource(String resourceName) {
         Pod pod = new PodBuilder()
@@ -95,6 +96,7 @@ public class StrimziPodSetCrdOperatorIT extends AbstractCustomResourceOperatorIT
                 .build();
     }
 
+    @SuppressWarnings("unchecked")
     @Override
     protected StrimziPodSet getResourceWithModifications(StrimziPodSet resourceInCluster) {
         Pod pod = new PodBuilder()
@@ -119,9 +121,9 @@ public class StrimziPodSetCrdOperatorIT extends AbstractCustomResourceOperatorIT
     protected StrimziPodSet getResourceWithNewReadyStatus(StrimziPodSet resourceInCluster) {
         return new StrimziPodSetBuilder(resourceInCluster)
                 .withNewStatus()
-                    .withPods(2)
-                    .withCurrentPods(2)
-                    .withReadyPods(2)
+                    .withPods(1)
+                    .withCurrentPods(1)
+                    .withReadyPods(1)
                 .endStatus()
                 .build();
     }
@@ -138,51 +140,17 @@ public class StrimziPodSetCrdOperatorIT extends AbstractCustomResourceOperatorIT
         });
     }
 
-    /**
-     * PodSet creation requires the status to be updated and the PodSet to be ready. This helper method updates the status once created.
-     *
-     * @param op            PodSet operator instance
-     * @param namespace     Namespace of the PodSet resource
-     * @param resourceName  Name of the PodSet resource
-     */
-    private void readinessHelper(StrimziPodSetOperator op, String namespace, String resourceName)  {
-        LOGGER.info("Setup helper to update readiness");
-        op.waitFor(Reconciliation.DUMMY_RECONCILIATION, namespace, resourceName, 100L, 10_000L, (n, ns) -> operator().get(namespace, resourceName) != null)
-                .compose(i -> {
-                    LOGGER.info("Updating readiness in helper");
-                    return op.updateStatusAsync(Reconciliation.DUMMY_RECONCILIATION, getResource(resourceName));
-                });
-    }
-
     @Test
-    public void testUnreadyCreateFails(VertxTestContext context) {
-        String resourceName = getResourceName(RESOURCE_NAME);
-        Checkpoint async = context.checkpoint();
-        String namespace = getNamespace();
-
-        // We create custom operator here to use small timout
-        StrimziPodSetOperator op = new StrimziPodSetOperator(vertx, client, 100L);
-
-        LOGGER.info("Creating resource");
-        op.reconcile(Reconciliation.DUMMY_RECONCILIATION, namespace, resourceName, getResource(resourceName))
-                .onComplete(context.failing(e -> context.verify(() -> {
-                    assertThat(e, instanceOf(TimeoutException.class));
-                    async.flag();
-                })));
-    }
-
-    @Test
-    public void testReadyCreateSucceeds(VertxTestContext context) {
+    public void testCreateSucceeds(VertxTestContext context) {
         String resourceName = getResourceName(RESOURCE_NAME);
         Checkpoint async = context.checkpoint();
         String namespace = getNamespace();
 
         StrimziPodSetOperator op = operator();
-        readinessHelper(op, namespace, resourceName); // Required to be able to create the resource
 
         LOGGER.info("Creating resource");
         op.reconcile(Reconciliation.DUMMY_RECONCILIATION, namespace, resourceName, getResource(resourceName))
-                .onComplete(context.succeedingThenComplete())
+                .onComplete(context.succeeding(i -> { }))
                 .compose(rrModified -> {
                     LOGGER.info("Deleting resource");
                     return op.reconcile(Reconciliation.DUMMY_RECONCILIATION, namespace, resourceName, null);
@@ -197,23 +165,22 @@ public class StrimziPodSetCrdOperatorIT extends AbstractCustomResourceOperatorIT
         String namespace = getNamespace();
 
         StrimziPodSetOperator op = operator();
-        readinessHelper(op, namespace, resourceName); // Required to be able to create the resource
 
         LOGGER.info("Creating resource");
         op.reconcile(Reconciliation.DUMMY_RECONCILIATION, namespace, resourceName, getResource(resourceName))
-                .onComplete(context.succeedingThenComplete())
-                .compose(rrCreated -> {
-                    StrimziPodSet newStatus = getResourceWithNewReadyStatus(rrCreated.resource());
+                .onComplete(context.succeeding(i -> { }))
+                .compose(i -> op.getAsync(namespace, resourceName)) // We need to get it again because of the faked readiness which would cause 409 error
+                .onComplete(context.succeeding(i -> { }))
+                .compose(resource -> {
+                    StrimziPodSet newStatus = getResourceWithNewReadyStatus(resource);
 
                     LOGGER.info("Updating resource status");
                     return op.updateStatusAsync(Reconciliation.DUMMY_RECONCILIATION, newStatus);
                 })
-                .onComplete(context.succeedingThenComplete())
+                .onComplete(context.succeeding(i -> { }))
 
                 .compose(rrModified -> op.getAsync(namespace, resourceName))
-                .onComplete(context.succeeding(modifiedCustomResource -> context.verify(() -> {
-                    assertReady(context, modifiedCustomResource);
-                })))
+                .onComplete(context.succeeding(modifiedCustomResource -> context.verify(() -> assertReady(context, modifiedCustomResource))))
 
                 .compose(rrModified -> {
                     LOGGER.info("Deleting resource");
@@ -225,7 +192,7 @@ public class StrimziPodSetCrdOperatorIT extends AbstractCustomResourceOperatorIT
     /**
      * Tests what happens when the resource is deleted while updating the status
      *
-     * @param context
+     * @param context   Test context
      */
     @Test
     public void testUpdateStatusAfterResourceDeletedThrowsKubernetesClientException(VertxTestContext context) {
@@ -234,13 +201,12 @@ public class StrimziPodSetCrdOperatorIT extends AbstractCustomResourceOperatorIT
         String namespace = getNamespace();
 
         StrimziPodSetOperator op = operator();
-        readinessHelper(op, namespace, resourceName); // Required to be able to create the resource
 
         AtomicReference<StrimziPodSet> newStatus = new AtomicReference<>();
 
         LOGGER.info("Creating resource");
         op.reconcile(Reconciliation.DUMMY_RECONCILIATION, namespace, resourceName, getResource(resourceName))
-                .onComplete(context.succeedingThenComplete())
+                .onComplete(context.succeeding(i -> { }))
 
                 .compose(rr -> {
                     LOGGER.info("Saving resource with status change prior to deletion");
@@ -248,7 +214,7 @@ public class StrimziPodSetCrdOperatorIT extends AbstractCustomResourceOperatorIT
                     LOGGER.info("Deleting resource");
                     return op.reconcile(Reconciliation.DUMMY_RECONCILIATION, namespace, resourceName, null);
                 })
-                .onComplete(context.succeedingThenComplete())
+                .onComplete(context.succeeding(i -> { }))
                 .compose(i -> {
                     LOGGER.info("Wait for confirmed deletion");
                     return op.waitFor(Reconciliation.DUMMY_RECONCILIATION, namespace, resourceName, 100L, 10_000L, (n, ns) -> operator().get(namespace, resourceName) == null);
@@ -266,7 +232,7 @@ public class StrimziPodSetCrdOperatorIT extends AbstractCustomResourceOperatorIT
     /**
      * Tests what happens when the resource is modified while updating the status
      *
-     * @param context
+     * @param context   Test context
      */
     @Test
     public void testUpdateStatusAfterResourceUpdated(VertxTestContext context) {
@@ -276,12 +242,12 @@ public class StrimziPodSetCrdOperatorIT extends AbstractCustomResourceOperatorIT
 
         StrimziPodSetOperator op = operator();
 
-        Promise updateStatus = Promise.promise();
-        readinessHelper(op, namespace, resourceName); // Required to be able to create the resource
+        Promise<Void> updateStatus = Promise.promise();
+        //readinessHelper(op, namespace, resourceName); // Required to be able to create the resource
 
         LOGGER.info("Creating resource");
         op.reconcile(Reconciliation.DUMMY_RECONCILIATION, namespace, resourceName, getResource(resourceName))
-                .onComplete(context.succeedingThenComplete())
+                .onComplete(context.succeeding(i -> { }))
                 .compose(rrCreated -> {
                     StrimziPodSet updated = getResourceWithModifications(rrCreated.resource());
                     StrimziPodSet newStatus = getResourceWithNewReadyStatus(rrCreated.resource());
@@ -292,9 +258,10 @@ public class StrimziPodSetCrdOperatorIT extends AbstractCustomResourceOperatorIT
                     LOGGER.info("Updating resource status after underlying resource has changed");
                     return op.updateStatusAsync(Reconciliation.DUMMY_RECONCILIATION, newStatus);
                 })
-                .onComplete(context.succeeding(res -> context.verify(() -> {
-                    assertThat(res.getMetadata().getName(), Matchers.is(resourceName));
-                    assertThat(res.getMetadata().getNamespace(), Matchers.is(namespace));
+                .onComplete(context.failing(e -> context.verify(() -> {
+                    LOGGER.info("Failed as expected");
+                    assertThat(e, instanceOf(KubernetesClientException.class));
+                    assertThat(((KubernetesClientException) e).getCode(), Matchers.is(409));
                     updateStatus.complete();
                 })));
 

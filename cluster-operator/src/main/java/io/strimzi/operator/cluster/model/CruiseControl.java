@@ -11,6 +11,7 @@ import io.fabric8.kubernetes.api.model.ContainerPort;
 import io.fabric8.kubernetes.api.model.EnvVar;
 import io.fabric8.kubernetes.api.model.HasMetadata;
 import io.fabric8.kubernetes.api.model.LocalObjectReference;
+import io.fabric8.kubernetes.api.model.ResourceRequirements;
 import io.fabric8.kubernetes.api.model.Secret;
 import io.fabric8.kubernetes.api.model.Service;
 import io.fabric8.kubernetes.api.model.Volume;
@@ -25,8 +26,6 @@ import io.strimzi.api.kafka.model.JvmOptions;
 import io.strimzi.api.kafka.model.Kafka;
 import io.strimzi.api.kafka.model.KafkaClusterSpec;
 import io.strimzi.api.kafka.model.KafkaResources;
-import io.strimzi.api.kafka.model.Probe;
-import io.strimzi.api.kafka.model.ProbeBuilder;
 import io.strimzi.api.kafka.model.storage.Storage;
 import io.strimzi.api.kafka.model.template.CruiseControlTemplate;
 import io.strimzi.api.kafka.model.template.DeploymentTemplate;
@@ -41,9 +40,8 @@ import io.strimzi.operator.cluster.model.metrics.MetricsModel;
 import io.strimzi.operator.cluster.model.metrics.SupportsMetrics;
 import io.strimzi.operator.cluster.model.securityprofiles.ContainerSecurityProviderContextImpl;
 import io.strimzi.operator.cluster.model.securityprofiles.PodSecurityProviderContextImpl;
-import io.strimzi.operator.cluster.operator.resource.cruisecontrol.CruiseControlConfigurationParameters;
-import io.strimzi.operator.common.MetricsAndLogging;
-import io.strimzi.operator.common.PasswordGenerator;
+import io.strimzi.operator.common.model.cruisecontrol.CruiseControlConfigurationParameters;
+import io.strimzi.operator.common.model.PasswordGenerator;
 import io.strimzi.operator.common.Reconciliation;
 import io.strimzi.operator.common.Util;
 import io.strimzi.operator.common.model.Labels;
@@ -70,7 +68,6 @@ import static io.strimzi.operator.cluster.model.VolumeUtils.createVolumeMount;
  */
 public class CruiseControl extends AbstractModel implements SupportsMetrics, SupportsLogging {
     protected static final String COMPONENT_TYPE = "cruise-control";
-    protected static final String CRUISE_CONTROL_METRIC_REPORTER = "com.linkedin.kafka.cruisecontrol.metricsreporter.CruiseControlMetricsReporter";
     protected static final String CRUISE_CONTROL_CONTAINER_NAME = "cruise-control";
 
     // Fields used for Cruise Control API authentication
@@ -106,14 +103,6 @@ public class CruiseControl extends AbstractModel implements SupportsMetrics, Sup
     // Configuration defaults
     protected static final boolean DEFAULT_CRUISE_CONTROL_METRICS_ENABLED = false;
 
-    // Default probe settings (liveness and readiness) for health checks
-    protected static final int DEFAULT_HEALTHCHECK_DELAY = 15;
-    protected static final int DEFAULT_HEALTHCHECK_TIMEOUT = 5;
-
-    private static final Probe DEFAULT_HEALTHCHECK_OPTIONS = new ProbeBuilder()
-            .withInitialDelaySeconds(DEFAULT_HEALTHCHECK_DELAY)
-            .withTimeoutSeconds(DEFAULT_HEALTHCHECK_TIMEOUT)
-            .build();
 
     private String minInsyncReplicas = "1";
     private boolean sslEnabled;
@@ -132,6 +121,10 @@ public class CruiseControl extends AbstractModel implements SupportsMetrics, Sup
     /* test */ static final String REST_API_PORT_NAME = "rest-api";
 
     /* test */ static final String MIN_INSYNC_REPLICAS = "min.insync.replicas";
+
+    /* test */ Capacity getCapacity() {
+        return capacity;
+    }
 
     // Cruise Control configuration keys (EnvVariables)
     protected static final String ENV_VAR_CRUISE_CONTROL_CONFIGURATION = "CRUISE_CONTROL_CONFIGURATION";
@@ -166,33 +159,41 @@ public class CruiseControl extends AbstractModel implements SupportsMetrics, Sup
      *
      * @param reconciliation The reconciliation
      * @param resource  Kubernetes resource with metadata containing the namespace and cluster name
+     * @param sharedEnvironmentProvider Shared environment provider
      */
-    private CruiseControl(Reconciliation reconciliation, HasMetadata resource) {
-        super(reconciliation, resource, CruiseControlResources.deploymentName(resource.getMetadata().getName()), COMPONENT_TYPE);
-
-        this.livenessProbeOptions = DEFAULT_HEALTHCHECK_OPTIONS;
-        this.readinessProbeOptions = DEFAULT_HEALTHCHECK_OPTIONS;
+    private CruiseControl(Reconciliation reconciliation, HasMetadata resource, SharedEnvironmentProvider sharedEnvironmentProvider) {
+        super(reconciliation, resource, CruiseControlResources.deploymentName(resource.getMetadata().getName()), COMPONENT_TYPE, sharedEnvironmentProvider);
     }
 
     /**
      * Creates an instance of the Cruise Control model from the custom resource. When Cruise Control is not enabled,
      * this will return null.
      *
-     * @param reconciliation    Reconciliation marker used for logging
-     * @param kafkaCr           The Kafka custom resource
-     * @param versions          Supported Kafka versions
-     * @param storage           The actual storage configuration used by the cluster. This might differ from the storage
-     *                          configuration configured by the user in the Kafka CR due to unallowed changes.
+     * @param reconciliation                Reconciliation marker used for logging
+     * @param kafkaCr                       The Kafka custom resource
+     * @param versions                      Supported Kafka versions
+     * @param kafkaBrokerNodes              List of the broker nodes which are part of the Kafka cluster
+     * @param kafkaStorage                  A map with storage configuration used by the Kafka cluster and its node pools
+     * @param kafkaBrokerResources          A map with resource configuration used by the Kafka cluster and its broker pools
+     * @param sharedEnvironmentProvider     Shared environment provider
      *
-     * @return                  Instance of the Cruise Control model
+     * @return  Instance of the Cruise Control model
      */
     @SuppressWarnings({"checkstyle:NPathComplexity", "checkstyle:CyclomaticComplexity"})
-    public static CruiseControl fromCrd(Reconciliation reconciliation, Kafka kafkaCr, KafkaVersion.Lookup versions, Storage storage) {
+    public static CruiseControl fromCrd(
+            Reconciliation reconciliation,
+            Kafka kafkaCr,
+            KafkaVersion.Lookup versions,
+            Set<NodeRef> kafkaBrokerNodes,
+            Map<String, Storage> kafkaStorage,
+            Map<String, ResourceRequirements> kafkaBrokerResources,
+            SharedEnvironmentProvider sharedEnvironmentProvider
+    ) {
         CruiseControlSpec ccSpec = kafkaCr.getSpec().getCruiseControl();
         KafkaClusterSpec kafkaClusterSpec = kafkaCr.getSpec().getKafka();
 
         if (ccSpec != null) {
-            CruiseControl result = new CruiseControl(reconciliation, kafkaCr);
+            CruiseControl result = new CruiseControl(reconciliation, kafkaCr, sharedEnvironmentProvider);
 
             String image = ccSpec.getImage();
             if (image == null) {
@@ -212,16 +213,9 @@ public class CruiseControl extends AbstractModel implements SupportsMetrics, Sup
 
             // To avoid illegal storage configurations provided by the user,
             // we rely on the storage configuration provided by the KafkaAssemblyOperator
-            result.capacity = new Capacity(reconciliation, kafkaCr.getSpec(), storage);
-
-            if (ccSpec.getReadinessProbe() != null) {
-                result.readinessProbeOptions = ccSpec.getReadinessProbe();
-            }
-
-            if (ccSpec.getLivenessProbe() != null) {
-                result.livenessProbeOptions = ccSpec.getLivenessProbe();
-            }
-
+            result.capacity = new Capacity(reconciliation, kafkaCr.getSpec(), kafkaBrokerNodes, kafkaStorage, kafkaBrokerResources);
+            result.readinessProbeOptions = ProbeUtils.extractReadinessProbeOptionsOrDefault(ccSpec, ProbeUtils.DEFAULT_HEALTHCHECK_OPTIONS);
+            result.livenessProbeOptions = ProbeUtils.extractLivenessProbeOptionsOrDefault(ccSpec, ProbeUtils.DEFAULT_HEALTHCHECK_OPTIONS);
             result.gcLoggingEnabled = ccSpec.getJvmOptions() == null ? JvmOptions.DEFAULT_GC_LOGGING_ENABLED : ccSpec.getJvmOptions().isGcLoggingEnabled();
             result.jvmOptions = ccSpec.getJvmOptions();
             result.metrics = new MetricsModel(ccSpec);
@@ -295,7 +289,7 @@ public class CruiseControl extends AbstractModel implements SupportsMetrics, Sup
     }
 
     /**
-     * @return  Generates a Kuberneets Service for Cruise Control
+     * @return  Generates a Kubernetes Service for Cruise Control
      */
     public Service generateService() {
         return ServiceUtils.createClusterIpService(
@@ -337,7 +331,7 @@ public class CruiseControl extends AbstractModel implements SupportsMetrics, Sup
     }
 
     /**
-     * Generates Kubernetes Deployment for Cruise Cotnrol
+     * Generates Kubernetes Deployment for Cruise Control
      *
      * @param isOpenShift       Flag indicating if we are on OpenShift or not
      * @param imagePullPolicy   Image pull policy
@@ -381,8 +375,8 @@ public class CruiseControl extends AbstractModel implements SupportsMetrics, Sup
                 getEnvVars(),
                 getContainerPortList(),
                 getVolumeMounts(),
-                ProbeGenerator.defaultBuilder(livenessProbeOptions).withNewExec().withCommand("/opt/cruise-control/cruise_control_healthcheck.sh").endExec().build(),
-                ProbeGenerator.defaultBuilder(readinessProbeOptions).withNewExec().withCommand("/opt/cruise-control/cruise_control_healthcheck.sh").endExec().build(),
+                ProbeUtils.defaultBuilder(livenessProbeOptions).withNewExec().withCommand("/opt/cruise-control/cruise_control_healthcheck.sh").endExec().build(),
+                ProbeUtils.defaultBuilder(readinessProbeOptions).withNewExec().withCommand("/opt/cruise-control/cruise_control_healthcheck.sh").endExec().build(),
                 imagePullPolicy
         );
     }
@@ -403,16 +397,16 @@ public class CruiseControl extends AbstractModel implements SupportsMetrics, Sup
         varList.add(ContainerUtils.createEnvVar(ENV_VAR_API_PORT,  String.valueOf(REST_API_PORT)));
         varList.add(ContainerUtils.createEnvVar(ENV_VAR_API_HEALTHCHECK_PATH, API_HEALTHCHECK_PATH));
 
-        ModelUtils.heapOptions(varList, 75, 0L, jvmOptions, resources);
-        ModelUtils.jvmPerformanceOptions(varList, jvmOptions);
-        ModelUtils.jvmSystemProperties(varList, jvmOptions);
+        JvmOptionUtils.heapOptions(varList, 75, 0L, jvmOptions, resources);
+        JvmOptionUtils.jvmPerformanceOptions(varList, jvmOptions);
+        JvmOptionUtils.jvmSystemProperties(varList, jvmOptions);
 
         if (configuration != null && !configuration.getConfiguration().isEmpty()) {
             varList.add(ContainerUtils.createEnvVar(ENV_VAR_CRUISE_CONTROL_CONFIGURATION, configuration.getConfiguration()));
         }
 
         // Add shared environment variables used for all containers
-        varList.addAll(ContainerUtils.requiredEnvVars());
+        varList.addAll(sharedEnvironmentProvider.variables());
 
         ContainerUtils.addContainerEnvsToExistingEnvs(reconciliation, varList, templateContainer);
 
@@ -544,7 +538,7 @@ public class CruiseControl extends AbstractModel implements SupportsMetrics, Sup
                         namespace,
                         labels,
                         ownerReference,
-                        MetricsAndLoggingUtils.generateMetricsAndLogConfigMapData(reconciliation, this, metricsAndLogging)
+                        ConfigMapUtils.generateMetricsAndLogConfigMapData(reconciliation, this, metricsAndLogging)
                 );
     }
 

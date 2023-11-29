@@ -5,48 +5,65 @@
 package io.strimzi.operator.cluster.operator.assembly;
 
 import io.fabric8.kubernetes.api.model.HasMetadata;
+import io.fabric8.kubernetes.api.model.ResourceRequirements;
 import io.fabric8.kubernetes.api.model.apps.StatefulSet;
 import io.fabric8.kubernetes.client.KubernetesClient;
+import io.fabric8.kubernetes.client.Watcher;
 import io.fabric8.kubernetes.client.dsl.Resource;
 import io.strimzi.api.kafka.KafkaList;
+import io.strimzi.api.kafka.KafkaNodePoolList;
 import io.strimzi.api.kafka.model.Constants;
 import io.strimzi.api.kafka.model.Kafka;
 import io.strimzi.api.kafka.model.KafkaBuilder;
 import io.strimzi.api.kafka.model.KafkaResources;
 import io.strimzi.api.kafka.model.KafkaSpec;
 import io.strimzi.api.kafka.model.StrimziPodSet;
+import io.strimzi.api.kafka.model.nodepool.KafkaNodePool;
 import io.strimzi.api.kafka.model.status.Condition;
 import io.strimzi.api.kafka.model.status.ConditionBuilder;
 import io.strimzi.api.kafka.model.status.KafkaStatus;
 import io.strimzi.api.kafka.model.status.KafkaStatusBuilder;
 import io.strimzi.api.kafka.model.storage.Storage;
 import io.strimzi.certs.CertManager;
-import io.strimzi.operator.PlatformFeaturesAvailability;
 import io.strimzi.operator.cluster.ClusterOperatorConfig;
 import io.strimzi.operator.cluster.FeatureGates;
-import io.strimzi.operator.cluster.model.ClientsCa;
+import io.strimzi.operator.cluster.PlatformFeaturesAvailability;
+import io.strimzi.operator.common.model.ClientsCa;
 import io.strimzi.operator.cluster.model.ClusterCa;
-import io.strimzi.operator.cluster.model.InvalidResourceException;
+import io.strimzi.operator.common.model.InvalidResourceException;
 import io.strimzi.operator.cluster.model.KRaftUtils;
 import io.strimzi.operator.cluster.model.KafkaVersionChange;
 import io.strimzi.operator.cluster.model.ModelUtils;
-import io.strimzi.operator.cluster.model.StatusDiff;
+import io.strimzi.operator.cluster.model.NodeRef;
+import io.strimzi.operator.cluster.model.PodSetUtils;
+import io.strimzi.operator.common.model.StatusDiff;
 import io.strimzi.operator.cluster.operator.resource.ResourceOperatorSupplier;
 import io.strimzi.operator.cluster.operator.resource.StatefulSetOperator;
 import io.strimzi.operator.common.Annotations;
-import io.strimzi.operator.common.PasswordGenerator;
+import io.strimzi.operator.common.InvalidConfigurationException;
+import io.strimzi.operator.common.model.PasswordGenerator;
 import io.strimzi.operator.common.Reconciliation;
 import io.strimzi.operator.common.ReconciliationException;
 import io.strimzi.operator.common.ReconciliationLogger;
+import io.strimzi.operator.common.Util;
+import io.strimzi.operator.common.VertxUtil;
+import io.strimzi.operator.common.model.Labels;
 import io.strimzi.operator.common.operator.resource.CrdOperator;
-import io.strimzi.operator.common.operator.resource.StatusUtils;
+import io.strimzi.operator.common.model.StatusUtils;
 import io.strimzi.operator.common.operator.resource.StrimziPodSetOperator;
-import io.vertx.core.CompositeFuture;
 import io.vertx.core.Future;
 import io.vertx.core.Promise;
 import io.vertx.core.Vertx;
 
+import java.io.IOException;
+import java.io.InputStream;
 import java.time.Clock;
+import java.util.HashMap;
+import java.util.List;
+import java.util.Map;
+import java.util.Properties;
+import java.util.Set;
+import java.util.stream.IntStream;
 
 /**
  * Assembly operator for the Kafka custom resource. It manages the following components:
@@ -59,14 +76,40 @@ import java.time.Clock;
 public class KafkaAssemblyOperator extends AbstractAssemblyOperator<KubernetesClient, Kafka, KafkaList, Resource<Kafka>, KafkaSpec, KafkaStatus> {
     private static final ReconciliationLogger LOGGER = ReconciliationLogger.create(KafkaAssemblyOperator.class.getName());
 
+    private static final Properties PROPERTIES = new Properties();
+    /**
+     * version of the operator, project.version in the pom.xml
+     */
+    /* test */ static final String OPERATOR_VERSION;
+
+    static {
+        InputStream propertiesFile = KafkaAssemblyOperator.class.getResourceAsStream("/.properties");
+        try {
+            try {
+                PROPERTIES.load(propertiesFile);
+            } catch (IOException e) {
+                throw new RuntimeException(e);
+            }
+        } finally {
+            try {
+                propertiesFile.close();
+            } catch (IOException e) {
+                throw new RuntimeException(e);
+            }
+        }
+        OPERATOR_VERSION = PROPERTIES.getProperty("version");
+    }
+
+
     /* test */ final ClusterOperatorConfig config;
     /* test */ final ResourceOperatorSupplier supplier;
 
     private final FeatureGates featureGates;
 
     private final StatefulSetOperator stsOperations;
-    private final CrdOperator<KubernetesClient, Kafka, KafkaList> crdOperator;
+    private final CrdOperator<KubernetesClient, Kafka, KafkaList> kafkaOperator;
     private final StrimziPodSetOperator strimziPodSetOperator;
+    private final CrdOperator<KubernetesClient, KafkaNodePool, KafkaNodePoolList> nodePoolOperator;
     protected Clock clock;
 
     /**
@@ -88,7 +131,8 @@ public class KafkaAssemblyOperator extends AbstractAssemblyOperator<KubernetesCl
         this.operationTimeoutMs = config.getOperationTimeoutMs();
         this.featureGates = config.featureGates();
         this.stsOperations = supplier.stsOperations;
-        this.crdOperator = supplier.kafkaOperator;
+        this.kafkaOperator = supplier.kafkaOperator;
+        this.nodePoolOperator = supplier.kafkaNodePoolOperator;
         this.strimziPodSetOperator = supplier.strimziPodSetOperator;
         this.clock = Clock.systemUTC();
     }
@@ -106,6 +150,33 @@ public class KafkaAssemblyOperator extends AbstractAssemblyOperator<KubernetesCl
                 status.setObservedGeneration(kafkaAssembly.getMetadata().getGeneration());
             }
 
+            // When some of the fields are not set in the new status (for example because the reconciliation failed),
+            // but the existing resource has them set in its status, we copy them over.
+            if (kafkaAssembly.getStatus() != null)  {
+                if (status.getClusterId() == null
+                        && kafkaAssembly.getStatus().getClusterId() != null)  {
+                    // Copy the Cluster ID if needed
+                    status.setClusterId(kafkaAssembly.getStatus().getClusterId());
+                }
+
+                if (kafkaAssembly.getStatus().getOperatorLastSuccessfulVersion() != null)  {
+                    // Copy the last successful operator version if needed
+                    status.setOperatorLastSuccessfulVersion(kafkaAssembly.getStatus().getOperatorLastSuccessfulVersion());
+                }
+
+                if (status.getKafkaVersion() == null
+                        && kafkaAssembly.getStatus().getKafkaVersion() != null)  {
+                    // Copy the Kafka version if needed
+                    status.setKafkaVersion(kafkaAssembly.getStatus().getKafkaVersion());
+                }
+
+                if (status.getKafkaMetadataVersion() == null
+                        && kafkaAssembly.getStatus().getKafkaMetadataVersion() != null)  {
+                    // Copy the metadata version if needed
+                    status.setKafkaMetadataVersion(kafkaAssembly.getStatus().getKafkaMetadataVersion());
+                }
+            }
+
             if (reconcileResult.succeeded())    {
                 condition = new ConditionBuilder()
                         .withLastTransitionTime(StatusUtils.iso8601(clock.instant()))
@@ -113,6 +184,8 @@ public class KafkaAssemblyOperator extends AbstractAssemblyOperator<KubernetesCl
                         .withStatus("True")
                         .build();
 
+                // successful reconcile, write operator version to successful reconcile field
+                status.setOperatorLastSuccessfulVersion(OPERATOR_VERSION);
                 status.addCondition(condition);
                 createOrUpdatePromise.complete(status);
             } else {
@@ -135,10 +208,18 @@ public class KafkaAssemblyOperator extends AbstractAssemblyOperator<KubernetesCl
     Future<Void> reconcile(ReconciliationState reconcileState)  {
         Promise<Void> chainPromise = Promise.promise();
 
-        // Validates features which are currently not supported in KRaft mode
-        if (featureGates.useKRaftEnabled()) {
+        boolean isKRaftEnabled = featureGates.useKRaftEnabled() && ReconcilerUtils.kraftEnabled(reconcileState.kafkaAssembly);
+
+        if (isKRaftEnabled) {
+            // Makes sure KRaft is used only with KafkaNodePool custom resources and not with virtual node pools
+            if (featureGates.kafkaNodePoolsEnabled()
+                    && !ReconcilerUtils.nodePoolsEnabled(reconcileState.kafkaAssembly))  {
+                throw new InvalidConfigurationException("The UseKRaft feature gate can be used only together with a Kafka cluster based on the KafkaNodePool resources.");
+            }
+
+            // Validates features which are currently not supported in KRaft mode
             try {
-                KRaftUtils.validateKafkaCrForKRaft(reconcileState.kafkaAssembly.getSpec());
+                KRaftUtils.validateKafkaCrForKRaft(reconcileState.kafkaAssembly.getSpec(), featureGates.unidirectionalTopicOperatorEnabled());
             } catch (InvalidResourceException e)    {
                 return Future.failedFuture(e);
             }
@@ -147,10 +228,10 @@ public class KafkaAssemblyOperator extends AbstractAssemblyOperator<KubernetesCl
         reconcileState.initialStatus()
                 // Preparation steps => prepare cluster descriptions, handle CA creation or changes
                 .compose(state -> state.reconcileCas(clock))
-                .compose(state -> state.versionChange())
+                .compose(state -> state.versionChange(isKRaftEnabled))
 
                 // Run reconciliations of the different components
-                .compose(state -> featureGates.useKRaftEnabled() ? Future.succeededFuture(state) : state.reconcileZooKeeper(clock))
+                .compose(state -> isKRaftEnabled ? Future.succeededFuture(state) : state.reconcileZooKeeper(clock))
                 .compose(state -> state.reconcileKafka(clock))
                 .compose(state -> state.reconcileEntityOperator(clock))
                 .compose(state -> state.reconcileCruiseControl(clock))
@@ -182,9 +263,10 @@ public class KafkaAssemblyOperator extends AbstractAssemblyOperator<KubernetesCl
         /* test */ ClusterCa clusterCa;
         /* test */ ClientsCa clientsCa;
 
-        // Needed by Cruise Control => due to illegal changes to the storage configuration, this cannot be just taken
-        // from the Kafka CR and needs to be passed form the KafkaCluster model.
-        private Storage kafkaStorage;
+        // Needed by Cruise control to configure the cluster, its nodes and their storage and resource configuration
+        private Set<NodeRef> kafkaBrokerNodes;
+        private Map<String, Storage> kafkaBrokerStorage;
+        private Map<String, ResourceRequirements> kafkaBrokerResources;
 
         /* test */ KafkaStatus kafkaStatus = new KafkaStatus();
 
@@ -206,7 +288,7 @@ public class KafkaAssemblyOperator extends AbstractAssemblyOperator<KubernetesCl
         Future<Void> updateStatus(KafkaStatus desiredStatus) {
             Promise<Void> updateStatusPromise = Promise.promise();
 
-            crdOperator.getAsync(namespace, name).onComplete(getRes -> {
+            kafkaOperator.getAsync(namespace, name).onComplete(getRes -> {
                 if (getRes.succeeded())    {
                     Kafka kafka = getRes.result();
 
@@ -222,7 +304,7 @@ public class KafkaAssemblyOperator extends AbstractAssemblyOperator<KubernetesCl
                             if (!ksDiff.isEmpty()) {
                                 Kafka resourceWithNewStatus = new KafkaBuilder(kafka).withStatus(desiredStatus).build();
 
-                                crdOperator.updateStatusAsync(reconciliation, resourceWithNewStatus).onComplete(updateRes -> {
+                                kafkaOperator.updateStatusAsync(reconciliation, resourceWithNewStatus).onComplete(updateRes -> {
                                     if (updateRes.succeeded()) {
                                         LOGGER.debugCr(reconciliation, "Completed status update");
                                         updateStatusPromise.complete();
@@ -257,7 +339,7 @@ public class KafkaAssemblyOperator extends AbstractAssemblyOperator<KubernetesCl
         Future<ReconciliationState> initialStatus() {
             Promise<ReconciliationState> initialStatusPromise = Promise.promise();
 
-            crdOperator.getAsync(namespace, name).onComplete(getRes -> {
+            kafkaOperator.getAsync(namespace, name).onComplete(getRes -> {
                 if (getRes.succeeded())    {
                     Kafka kafka = getRes.result();
 
@@ -365,19 +447,27 @@ public class KafkaAssemblyOperator extends AbstractAssemblyOperator<KubernetesCl
         /**
          * Provider method for VersionChangeCreator. Overriding this method can be used to get mocked creator.
          *
+         * @param isKRaftEnabled    Indicates whether KRaft is enabled for this custom resource
+         *
          * @return  VersionChangeCreator instance
          */
-        VersionChangeCreator versionChangeCreator()   {
-            return new VersionChangeCreator(reconciliation, kafkaAssembly, config, supplier);
+        VersionChangeCreator versionChangeCreator(boolean isKRaftEnabled)   {
+            if (isKRaftEnabled)   {
+                return new KRaftVersionChangeCreator(reconciliation, kafkaAssembly, config, supplier);
+            } else {
+                return new ZooKeeperVersionChangeCreator(reconciliation, kafkaAssembly, config, supplier);
+            }
         }
 
         /**
          * Creates the KafkaVersionChange instance describing the version changes in this reconciliation.
          *
+         * @param isKRaftEnabled    Indicates whether KRaft is enabled for this custom resource
+         *
          * @return  Future with Reconciliation State
          */
-        Future<ReconciliationState> versionChange()    {
-            return versionChangeCreator()
+        Future<ReconciliationState> versionChange(boolean isKRaftEnabled)    {
+            return versionChangeCreator(isKRaftEnabled)
                     .reconcile()
                     .compose(versionChange -> {
                         this.versionChange = versionChange;
@@ -396,7 +486,7 @@ public class KafkaAssemblyOperator extends AbstractAssemblyOperator<KubernetesCl
             Future<StatefulSet> stsFuture = stsOperations.getAsync(namespace, KafkaResources.zookeeperStatefulSetName(name));
             Future<StrimziPodSet> podSetFuture = strimziPodSetOperator.getAsync(namespace, KafkaResources.zookeeperStatefulSetName(name));
 
-            return CompositeFuture.join(stsFuture, podSetFuture)
+            return Future.join(stsFuture, podSetFuture)
                     .compose(res -> {
                         StatefulSet sts = res.resultAt(0);
                         StrimziPodSet podSet = res.resultAt(1);
@@ -454,15 +544,28 @@ public class KafkaAssemblyOperator extends AbstractAssemblyOperator<KubernetesCl
          * method expects that the information about current storage and replicas are collected and passed as arguments.
          * Overriding this method can be used to get mocked reconciler.
          *
-         * @param oldStorage        Current storage configuration of the running cluster. 0 if the cluster is not running yet.
-         * @param currentReplicas   Current number of replicas in the Kafka cluster. Null if it is not running yet.
+         * @param nodePools         List of node pools belonging to this cluster
+         * @param oldStorage        Map of current storage configurations of the running cluster. Empty if the PodSet
+         *                          (or StatefulSet doesn't exist yet).
+         * @param currentPods       Map of lists with the existing pod names for different StrimziPodSets. Empty if the
+         *                          PodSet (or StatefulSet doesn't exist yet)
          *
          * @return  KafkaReconciler instance
          */
-        KafkaReconciler kafkaReconciler(Storage oldStorage, int currentReplicas) {
+        KafkaReconciler kafkaReconciler(List<KafkaNodePool> nodePools, Map<String, Storage> oldStorage, Map<String, List<String>> currentPods) {
             return new KafkaReconciler(
                     reconciliation,
-                    kafkaAssembly, oldStorage, currentReplicas, clusterCa, clientsCa, versionChange, config, supplier, pfa, vertx
+                    kafkaAssembly,
+                    nodePools,
+                    oldStorage,
+                    currentPods,
+                    clusterCa,
+                    clientsCa,
+                    versionChange,
+                    config,
+                    supplier,
+                    pfa,
+                    vertx
             );
         }
 
@@ -474,35 +577,57 @@ public class KafkaAssemblyOperator extends AbstractAssemblyOperator<KubernetesCl
          * @return  Future with Kafka reconciler
          */
         Future<KafkaReconciler> kafkaReconciler()   {
-            Future<StatefulSet> stsFuture = stsOperations.getAsync(namespace, KafkaResources.kafkaStatefulSetName(name));
-            Future<StrimziPodSet> podSetFuture = strimziPodSetOperator.getAsync(namespace, KafkaResources.kafkaStatefulSetName(name));
+            Labels kafkaSelectorLabels = Labels.EMPTY
+                    .withStrimziKind(reconciliation.kind())
+                    .withStrimziCluster(reconciliation.name())
+                    .withStrimziName(KafkaResources.kafkaStatefulSetName(reconciliation.name()));
 
-            return CompositeFuture.join(stsFuture, podSetFuture)
+            Future<List<KafkaNodePool>> nodePoolFuture;
+            if (featureGates.kafkaNodePoolsEnabled()
+                    && ReconcilerUtils.nodePoolsEnabled(kafkaAssembly)) {
+                // Node Pools are enabled
+                nodePoolFuture = nodePoolOperator.listAsync(namespace, Labels.fromMap(Map.of(Labels.STRIMZI_CLUSTER_LABEL, name)));
+            } else {
+                nodePoolFuture = Future.succeededFuture(null);
+            }
+
+            Future<StatefulSet> stsFuture = stsOperations.getAsync(namespace, KafkaResources.kafkaStatefulSetName(name));
+            Future<List<StrimziPodSet>> podSetFuture = strimziPodSetOperator.listAsync(namespace, kafkaSelectorLabels);
+
+            return Future.join(stsFuture, podSetFuture, nodePoolFuture)
                     .compose(res -> {
                         StatefulSet sts = res.resultAt(0);
-                        StrimziPodSet podSet = res.resultAt(1);
+                        List<StrimziPodSet> podSets = res.resultAt(1);
+                        List<KafkaNodePool> nodePools = res.resultAt(2);
 
-                        int currentReplicas = 0;
-                        Storage oldStorage = null;
-
-                        if (sts != null && podSet != null)  {
-                            // Both StatefulSet and PodSet exist => we use the StrimziPodSet as that is the main controller resource
-                            oldStorage = getOldStorage(podSet);
-                            currentReplicas = currentReplicas(podSet);
-                        } else if (podSet != null) {
-                            // PodSet exists, StatefulSet does not => we create the description from the PodSet
-                            oldStorage = getOldStorage(podSet);
-                            currentReplicas = currentReplicas(podSet);
-                        } else if (sts != null) {
-                            // StatefulSet exists, PodSet does not exist => we create the description from the StatefulSet
-                            oldStorage = getOldStorage(sts);
-                            currentReplicas = currentReplicas(sts);
+                        if (config.featureGates().kafkaNodePoolsEnabled()
+                                && ReconcilerUtils.nodePoolsEnabled(kafkaAssembly)
+                                && (nodePools == null || nodePools.isEmpty()))  {
+                            throw new InvalidConfigurationException("KafkaNodePools are enabled, but no KafkaNodePools found for Kafka cluster " + name);
                         }
 
-                        KafkaReconciler reconciler = kafkaReconciler(oldStorage, currentReplicas);
+                        Map<String, List<String>> currentPods = new HashMap<>();
+                        Map<String, Storage> oldStorage = new HashMap<>();
+
+                        if (podSets != null && !podSets.isEmpty())  {
+                            // One or more PodSets exist => we go on and use them
+                            for (StrimziPodSet podSet : podSets)    {
+                                oldStorage.put(podSet.getMetadata().getName(), getOldStorage(podSet));
+                                currentPods.put(podSet.getMetadata().getName(), PodSetUtils.podNames(podSet));
+                            }
+                        } else if (sts != null) {
+                            // StatefulSet exists, PodSet does not exist => we create the description from the StatefulSet
+                            oldStorage.put(sts.getMetadata().getName(), getOldStorage(sts));
+                            // We generate the list of existing pod names based on the replica count
+                            currentPods.put(sts.getMetadata().getName(), IntStream.range(0, sts.getSpec().getReplicas()).mapToObj(i -> KafkaResources.kafkaPodName(kafkaAssembly.getMetadata().getName(), i)).toList());
+                        }
+
+                        KafkaReconciler reconciler = kafkaReconciler(nodePools, oldStorage, currentPods);
 
                         // We store this for use with Cruise Control later
-                        kafkaStorage = reconciler.kafkaStorage();
+                        kafkaBrokerNodes = reconciler.kafkaBrokerNodes();
+                        kafkaBrokerStorage = reconciler.kafkaStorage();
+                        kafkaBrokerResources = reconciler.kafkaBrokerResourceRequirements();
 
                         return Future.succeededFuture(reconciler);
                     });
@@ -587,7 +712,9 @@ public class KafkaAssemblyOperator extends AbstractAssemblyOperator<KubernetesCl
                     supplier,
                     kafkaAssembly,
                     versions,
-                    kafkaStorage,
+                    kafkaBrokerNodes,
+                    kafkaBrokerStorage,
+                    kafkaBrokerResources,
                     clusterCa
             );
         }
@@ -638,8 +765,15 @@ public class KafkaAssemblyOperator extends AbstractAssemblyOperator<KubernetesCl
     }
 
     @Override
-    protected KafkaStatus createStatus() {
-        return new KafkaStatus();
+    protected KafkaStatus createStatus(Kafka kafka) {
+        KafkaStatus status = new KafkaStatus();
+
+        // We copy the cluster ID if set
+        if (kafka.getStatus() != null && kafka.getStatus().getClusterId() != null)  {
+            status.setClusterId(kafka.getStatus().getClusterId());
+        }
+
+        return status;
     }
 
     /**
@@ -652,5 +786,82 @@ public class KafkaAssemblyOperator extends AbstractAssemblyOperator<KubernetesCl
     protected Future<Boolean> delete(Reconciliation reconciliation) {
         return ReconcilerUtils.withIgnoreRbacError(reconciliation, clusterRoleBindingOperations.reconcile(reconciliation, KafkaResources.initContainerClusterRoleBindingName(reconciliation.name(), reconciliation.namespace()), null), null)
                 .map(Boolean.FALSE); // Return FALSE since other resources are still deleted by garbage collection
+    }
+
+    /**
+     * Create Kubernetes watch for KafkaNodePool resources.
+     *
+     * @param namespace     Namespace where to watch for the resources
+     *
+     * @return  A future which completes when the watcher has been created
+     */
+    public Future<ReconnectingWatcher<KafkaNodePool>> createNodePoolWatch(String namespace) {
+        return VertxUtil.async(vertx, () -> new ReconnectingWatcher<>(nodePoolOperator, KafkaNodePool.RESOURCE_KIND, namespace, null, this::nodePoolEventHandler));
+    }
+
+    /**
+     * Event handler called when the KafkaNodePool watch receives an event.
+     *
+     * @param action    An Action describing the type of the event
+     * @param resource  The resource for which the event was triggered
+     */
+    /* test */ void nodePoolEventHandler(Watcher.Action action, KafkaNodePool resource) {
+        String name = resource.getMetadata().getName();
+        String namespace = resource.getMetadata().getNamespace();
+
+        switch (action) {
+            case ADDED, DELETED, MODIFIED -> maybeEnqueueReconciliation(action, resource);
+            case ERROR -> {
+                LOGGER.errorCr(new Reconciliation("watch", resource.getKind(), namespace, name), "Error action: {} {} in namespace {} ", resource.getKind(), namespace, name);
+                reconcileAll("watch error", namespace, ignored -> {
+                });
+            }
+            default -> {
+                LOGGER.errorCr(new Reconciliation("watch", resource.getKind(), namespace, name), "Unknown action: {} in namespace {}", resource.getKind(), namespace, name);
+                reconcileAll("watch unknown", namespace, ignored -> {
+                });
+            }
+        }
+    }
+
+    /**
+     * Checks the KafkaNodePool resource and decides if a reconciliation should be triggered. This decision is based on
+     * whether there is a matching Kafka resource, if it matches the seelctor etc.
+     *
+     * @param action    Action describing the event
+     * @param resource  KafkaNodePool resource to which the event happened
+     */
+    private void maybeEnqueueReconciliation(Watcher.Action action, KafkaNodePool resource) {
+        if (resource.getMetadata().getLabels() != null
+                && resource.getMetadata().getLabels().get(Labels.STRIMZI_CLUSTER_LABEL) != null)    {
+            String kafkaName = resource.getMetadata().getLabels().get(Labels.STRIMZI_CLUSTER_LABEL);
+            Kafka kafka = kafkaOperator.get(resource.getMetadata().getNamespace(), kafkaName);
+
+            if (kafka != null
+                    && Util.matchesSelector(selector(), kafka)) {
+                if (ReconcilerUtils.nodePoolsEnabled(kafka)) {
+                    Reconciliation reconciliation = new Reconciliation("watch", kind(), kafka.getMetadata().getNamespace(), kafkaName);
+                    LOGGER.infoCr(reconciliation, "{} {} in namespace {} was {}", resource.getKind(), resource.getMetadata().getName(), resource.getMetadata().getNamespace(), action);
+                    enqueueReconciliation(reconciliation);
+                } else {
+                    LOGGER.warnOp("{} {} in namespace {} was {}, but the Kafka cluster {} to which it belongs does not have {} support enabled", resource.getKind(), resource.getMetadata().getName(), resource.getMetadata().getNamespace(), action, kafkaName, resource.getKind());
+                }
+            } else if (kafka == null) {
+                LOGGER.warnOp("{} {} in namespace {} was {}, but the Kafka cluster {} to which it belongs does not exist", resource.getKind(), resource.getMetadata().getName(), resource.getMetadata().getNamespace(), action, kafkaName);
+            } else {
+                LOGGER.debugOp("{} {} in namespace {} was {}, but the Kafka cluster {} to which it belongs is not managed by this operator instance", resource.getKind(), resource.getMetadata().getName(), resource.getMetadata().getNamespace(), action, kafkaName);
+            }
+        } else {
+            LOGGER.warnOp("{} {} in namespace {} was {}, but does not contain {} label", resource.getKind(), resource.getMetadata().getName(), resource.getMetadata().getNamespace(), action, Labels.STRIMZI_CLUSTER_LABEL);
+        }
+    }
+
+    /**
+     * Utility method for enqueueing reconciliation from he KafkaNodePool event handler. A separate method is used to allow testing of the enqueue handler.
+     *
+     * @param reconciliation    Reconciliation marker
+     */
+    /* test */ void enqueueReconciliation(Reconciliation reconciliation) {
+        reconcile(reconciliation);
     }
 }

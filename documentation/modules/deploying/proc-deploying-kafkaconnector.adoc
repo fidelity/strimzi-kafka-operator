@@ -15,10 +15,8 @@ You remove a connector by deleting its corresponding `KafkaConnector`.
 
 `KafkaConnector` resources must be deployed to the same namespace as the Kafka Connect cluster they link to.
 
-In the configuration shown in this procedure, the `autoRestart` property is set to `true`.
-This enables automatic restarts of failed connectors and tasks. 
-Up to seven restart attempts are made, after which restarts must be made manually.
-You annotate the `KafkaConnector` resource to xref:proc-manual-restart-connector-str[restart a connector] or xref:proc-manual-restart-connector-task-str[restart a connector task] manually.
+In the configuration shown in this procedure, the `autoRestart` feature is enabled (`enabled: true`) for automatic restarts of failed connectors and tasks. 
+You can also annotate the `KafkaConnector` resource to xref:proc-manual-restart-connector-str[restart a connector] or xref:proc-manual-restart-connector-task-str[restart a connector task] manually.
 
 .Example connectors
 
@@ -26,7 +24,7 @@ You can use your own connectors or try the examples provided by Strimzi.
 Up until Apache Kafka 3.1.0, example file connector plugins were included with Apache Kafka. 
 Starting from the 3.1.1 and 3.2.0 releases of Apache Kafka, the examples need to be xref:using-kafka-connect-with-plug-ins-str[added to the plugin path as any other connector]. 
 
-Strimzi provides an xref:deploy-examples-{context}[example `KafkaConnector` configuration file] (`examples/connect/source-connector.yaml`) for the example file connector plugins, which creates the following connector instances as `KafkaConnector` resources:
+Strimzi provides an xref:config-examples-{context}[example `KafkaConnector` configuration file] (`examples/connect/source-connector.yaml`) for the example file connector plugins, which creates the following connector instances as `KafkaConnector` resources:
 
 * A `FileStreamSourceConnector` instance that reads each line from the Kafka license file (the source) and writes the data as messages to a single Kafka topic.
 * A `FileStreamSinkConnector` instance that reads messages from the Kafka topic and writes the messages to a temporary file (the sink).
@@ -66,33 +64,9 @@ With the `KafkaConnector` resources enabled, the Cluster Operator watches for th
 
 . Edit the `examples/connect/source-connector.yaml` file:
 +
-[source,yaml,subs="attributes+"]
-----
-apiVersion: {KafkaConnectorApiVersion}
-kind: KafkaConnector
-metadata:
-  name: my-source-connector # <1>
-  labels:
-    strimzi.io/cluster: my-connect-cluster # <2>
-spec:
-  class: org.apache.kafka.connect.file.FileStreamSourceConnector # <3>
-  tasksMax: 2 # <4>
-  autoRestart: # <5>
-    enabled: true
-  config: # <6>
-    file: "/opt/kafka/LICENSE" # <7>
-    topic: my-topic <8>
-    # ...
-----
-+
-<1> Name of the `KafkaConnector` resource, which is used as the name of the connector. Use any name that is valid for a Kubernetes resource.
-<2> Name of the Kafka Connect cluster to create the connector instance in. Connectors must be deployed to the same namespace as the Kafka Connect cluster they link to.
-<3> Full name or alias of the connector class. This should be present in the image being used by the Kafka Connect cluster.
-<4> Maximum number of Kafka Connect tasks that the connector can create.
-<5> Enables automatic restarts of failed connectors and tasks.
-<6> xref:kafkaconnector-configs[Connector configuration] as key-value pairs.
-<7> This example source connector configuration reads data from the `/opt/kafka/LICENSE` file.
-<8> Kafka topic to publish the source data to.
+--
+include::../../shared/snip-example-source-connector-config.adoc[]
+--
 
 . Create the source `KafkaConnector` in your Kubernetes cluster:
 +
@@ -119,11 +93,11 @@ metadata:
   labels:
     strimzi.io/cluster: my-connect
 spec:
-  class: org.apache.kafka.connect.file.FileStreamSinkConnector <1>
+  class: org.apache.kafka.connect.file.FileStreamSinkConnector # <1>
   tasksMax: 2
-  config: <2>
-    file: "/tmp/my-file" <3>
-    topics: my-topic <4>
+  config: # <2>
+    file: "/tmp/my-file" # <3>
+    topics: my-topic # <4>
 ----
 +
 <1> Full name or alias of the connector class. This should be present in the image being used by the Kafka Connect cluster.

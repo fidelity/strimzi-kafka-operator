@@ -4,23 +4,29 @@
  */
 package io.strimzi.operator.cluster.operator.assembly;
 
+import io.fabric8.kubernetes.api.model.HasMetadata;
 import io.fabric8.kubernetes.api.model.Pod;
 import io.fabric8.kubernetes.api.model.Secret;
 import io.fabric8.kubernetes.api.model.rbac.ClusterRoleBinding;
+import io.fabric8.kubernetes.client.KubernetesClientException;
+import io.strimzi.api.kafka.model.Kafka;
 import io.strimzi.api.kafka.model.KafkaResources;
 import io.strimzi.api.kafka.model.StrimziPodSet;
-import io.strimzi.operator.cluster.ClusterOperator;
-import io.strimzi.operator.cluster.model.Ca;
-import io.strimzi.operator.cluster.model.ClientsCa;
+import io.strimzi.operator.common.model.Ca;
+import io.strimzi.operator.common.model.ClientsCa;
+import io.strimzi.operator.cluster.model.KafkaCluster;
 import io.strimzi.operator.cluster.model.ModelUtils;
+import io.strimzi.operator.cluster.model.NodeRef;
+import io.strimzi.operator.cluster.model.PodSetUtils;
 import io.strimzi.operator.cluster.model.RestartReason;
 import io.strimzi.operator.cluster.model.RestartReasons;
 import io.strimzi.operator.cluster.model.jmx.SupportsJmx;
-import io.strimzi.operator.cluster.operator.resource.PodRevision;
+import io.strimzi.operator.cluster.model.PodRevision;
 import io.strimzi.operator.common.Annotations;
 import io.strimzi.operator.common.Reconciliation;
 import io.strimzi.operator.common.ReconciliationLogger;
 import io.strimzi.operator.common.Util;
+import io.strimzi.operator.common.model.Labels;
 import io.strimzi.operator.common.operator.resource.PodOperator;
 import io.strimzi.operator.common.operator.resource.ReconcileResult;
 import io.strimzi.operator.common.operator.resource.SecretOperator;
@@ -29,6 +35,7 @@ import io.vertx.core.Future;
 
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
 
@@ -56,8 +63,8 @@ public class ReconcilerUtils {
                 rr -> Future.succeededFuture(),
                 e -> {
                     if (desired == null
-                            && e.getMessage() != null
-                            && e.getMessage().contains("Message: Forbidden!")) {
+                            && e instanceof KubernetesClientException kce
+                            && kce.getCode() == 403) {
                         LOGGER.debugCr(reconciliation, "Ignoring forbidden access to ClusterRoleBindings resource which does not seem to be required.");
                         return Future.succeededFuture();
                     }
@@ -77,15 +84,14 @@ public class ReconcilerUtils {
      * @return  Future which completes when all pods are ready or fails when they are not ready in time
      */
     public static Future<Void> podsReady(Reconciliation reconciliation, PodOperator podOperator, long operationTimeoutMs, List<String> podNames) {
-        @SuppressWarnings({ "rawtypes" }) // Has to use Raw type because of the CompositeFuture
-        List<Future> podFutures = new ArrayList<>(podNames.size());
+        List<Future<Void>> podFutures = new ArrayList<>(podNames.size());
 
         for (String podName : podNames) {
             LOGGER.debugCr(reconciliation, "Checking readiness of pod {} in namespace {}", podName, reconciliation.namespace());
             podFutures.add(podOperator.readiness(reconciliation, reconciliation.namespace(), podName, 1_000, operationTimeoutMs));
         }
 
-        return CompositeFuture.join(podFutures)
+        return Future.join(podFutures)
                 .map((Void) null);
     }
 
@@ -100,9 +106,9 @@ public class ReconcilerUtils {
      *          result being the Kubernetes Secret with the Cluster Operator public and private key.
      */
     public static CompositeFuture clientSecrets(Reconciliation reconciliation, SecretOperator secretOperator) {
-        return CompositeFuture.join(
+        return Future.join(
                 getSecret(secretOperator, reconciliation.namespace(), KafkaResources.clusterCaCertificateSecretName(reconciliation.name())),
-                getSecret(secretOperator, reconciliation.namespace(), ClusterOperator.secretName(reconciliation.name()))
+                getSecret(secretOperator, reconciliation.namespace(), KafkaResources.secretName(reconciliation.name()))
         );
     }
 
@@ -171,7 +177,7 @@ public class ReconcilerUtils {
         }
 
         if (restartReasons.shouldRestart()) {
-            LOGGER.debugCr(reconciliation, "Rolling pod {} due to {}",
+            LOGGER.debugCr(reconciliation, "Rolling Pod {} due to {}",
                     pod.getMetadata().getName(), restartReasons.getAllReasonNotes());
         }
 
@@ -242,6 +248,106 @@ public class ReconcilerUtils {
     }
 
     /**
+     * Utility method to extract controller name from pod name (= the part before the index at the end)
+     *
+     * @param podName   Name of the pod
+     *
+     * @return          Name of the controller
+     */
+    public static String getControllerNameFromPodName(String podName)  {
+        return podName.substring(0, podName.lastIndexOf("-"));
+    }
+
+    /**
+     * Gets a list of node references from a PodSet
+     *
+     * @param podSet    The PodSet from which the nodes should extracted
+     *
+     * @return  List of node references based on this PodSet
+     */
+    public static List<NodeRef> nodesFromPodSet(StrimziPodSet podSet)   {
+        return PodSetUtils
+                .podSetToPods(podSet)
+                .stream()
+                .map(pod -> nodeFromPod(pod))
+                .toList();
+    }
+
+    /**
+     * Creates a node reference from a Pod
+     *
+     * @param pod   Pod from which the node reference should be created
+     *
+     * @return  Node reference for this pod
+     */
+    public static NodeRef nodeFromPod(Pod pod) {
+        return new NodeRef(
+                pod.getMetadata().getName(),
+                ReconcilerUtils.getPodIndexFromPodName(pod.getMetadata().getName()),
+                ReconcilerUtils.getPoolNameFromPodName(clusterNameFromLabel(pod), pod.getMetadata().getName()),
+                hasRole(pod, Labels.STRIMZI_CONTROLLER_ROLE_LABEL),
+                hasRole(pod, Labels.STRIMZI_BROKER_ROLE_LABEL));
+    }
+
+    /**
+     * Utility method to extract pool name from pod name. The Pod name consists from 3 parts: the cluster name, the pod
+     * suffix / index and the pool name in the middle. So when we know the cluster name, we can extract the pool name
+     * from it.
+     *
+     * @param clusterName   Name of the cluster
+     * @param podName       Name of the pod
+     *
+     * @return          Name of the pool
+     */
+    /* test */ static String getPoolNameFromPodName(String clusterName, String podName)  {
+        return podName.substring(clusterName.length() + 1, podName.lastIndexOf("-"));
+    }
+
+    /**
+     * Extracts cluster name from the strimzi.io/cluster labels
+     *
+     * @param resource  The resource with labels
+     *
+     * @return  The name of the cluster
+     *
+     * @throws  RuntimeException is thrown when the label is missing
+     */
+    /* test */ static String clusterNameFromLabel(HasMetadata resource)    {
+        String clusterName = null;
+
+        if (resource != null
+                && resource.getMetadata() != null
+                && resource.getMetadata().getLabels() != null) {
+            clusterName = resource.getMetadata().getLabels().get(Labels.STRIMZI_CLUSTER_LABEL);
+        }
+
+        if (clusterName != null)    {
+            return clusterName;
+        } else {
+            throw new RuntimeException("Failed to extract cluster name from Pod label");
+        }
+    }
+
+    /**
+     * Checks if the Kubernetes resource has the given label and if it does, whether it contains "true". In that case,
+     * it will return true. If the label is not set or does not contain "true", it will return false.
+     *
+     * @param resource  Resource where to check for the label
+     * @param label     Name of the label (e.g. strimzi.io/controller-role or strimzi.io/broker-role)
+     *
+     * @return  True if the label is present and set to "true". False otherwise.
+     */
+    private static boolean hasRole(HasMetadata resource, String label)    {
+        if (resource != null
+                && resource.getMetadata() != null
+                && resource.getMetadata().getLabels() != null) {
+            return "true".equals(resource.getMetadata().getLabels().getOrDefault(label, "false"));
+        } else {
+            return false;
+        }
+    }
+
+    /**
      * Check weather the pod is tracking an outdated server certificate.
      *
      * Returns false if the pod isn't tracking a server certificate (i.e. isn't annotated with ANNO_STRIMZI_SERVER_CERT_HASH)
@@ -254,5 +360,26 @@ public class ReconcilerUtils {
         var currentCertHash = Annotations.stringAnnotation(pod, ANNO_STRIMZI_SERVER_CERT_HASH, null);
         var desiredCertHash = certHashCache.get(ReconcilerUtils.getPodIndexFromPodName(pod.getMetadata().getName()));
         return currentCertHash != null && desiredCertHash != null && !currentCertHash.equals(desiredCertHash);
+    }
+
+    /**
+     * Checks whether Node pools are enabled for given Kafka custom resource using the strimzi.io/node-pools annotation
+     *
+     * @param kafka     The Kafka custom resource which might have the node-pools annotation
+     *
+     * @return      True when the node pools are enabled. False otherwise.
+     */
+    public static boolean nodePoolsEnabled(Kafka kafka) {
+        return KafkaCluster.ENABLED_VALUE_STRIMZI_IO_NODE_POOLS.equals(Annotations.stringAnnotation(kafka, Annotations.ANNO_STRIMZI_IO_NODE_POOLS, "disabled").toLowerCase(Locale.ENGLISH));
+    }
+
+    /**
+     * Checks whether the KRaft mode is enabled for given Kafka custom resource using the strimzi.io/kraft annotation
+     *
+     * @param kafka Tha Kafka custom resource which might have the node-pools annotation
+     * @return True when the KRaft mode is enabled. False otherwise (using ZooKeeper mode).
+     */
+    public static boolean kraftEnabled(Kafka kafka) {
+        return KafkaCluster.ENABLED_VALUE_STRIMZI_IO_KRAFT.equals(Annotations.stringAnnotation(kafka, Annotations.ANNO_STRIMZI_IO_KRAFT, "disabled").toLowerCase(Locale.ENGLISH));
     }
 }

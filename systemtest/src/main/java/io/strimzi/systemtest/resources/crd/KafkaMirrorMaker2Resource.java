@@ -33,13 +33,19 @@ public class KafkaMirrorMaker2Resource implements ResourceType<KafkaMirrorMaker2
     }
     @Override
     public void create(KafkaMirrorMaker2 resource) {
-        kafkaMirrorMaker2Client().inNamespace(resource.getMetadata().getNamespace()).resource(resource).createOrReplace();
+        kafkaMirrorMaker2Client().inNamespace(resource.getMetadata().getNamespace()).resource(resource).create();
     }
     @Override
     public void delete(KafkaMirrorMaker2 resource) {
         kafkaMirrorMaker2Client().inNamespace(resource.getMetadata().getNamespace()).withName(
             resource.getMetadata().getName()).withPropagationPolicy(DeletionPropagation.FOREGROUND).delete();
     }
+
+    @Override
+    public void update(KafkaMirrorMaker2 resource) {
+        kafkaMirrorMaker2Client().inNamespace(resource.getMetadata().getNamespace()).resource(resource).update();
+    }
+
     @Override
     public boolean waitForReadiness(KafkaMirrorMaker2 resource) {
         return KafkaMirrorMaker2Utils.waitForKafkaMirrorMaker2Ready(resource.getMetadata().getNamespace(), resource.getMetadata().getName());

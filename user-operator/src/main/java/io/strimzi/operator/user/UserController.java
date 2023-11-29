@@ -9,18 +9,23 @@ import io.fabric8.kubernetes.client.KubernetesClient;
 import io.fabric8.kubernetes.client.informers.ResourceEventHandler;
 import io.fabric8.kubernetes.client.informers.SharedIndexInformer;
 import io.fabric8.kubernetes.client.informers.cache.Lister;
-import io.strimzi.api.kafka.Crds;
+import io.strimzi.api.kafka.KafkaUserList;
 import io.strimzi.api.kafka.model.KafkaUser;
 import io.strimzi.operator.common.Annotations;
+import io.strimzi.operator.common.InformerUtils;
 import io.strimzi.operator.common.MetricsProvider;
 import io.strimzi.operator.common.ReconciliationLogger;
 import io.strimzi.operator.common.controller.AbstractControllerLoop;
 import io.strimzi.operator.common.controller.ControllerQueue;
 import io.strimzi.operator.common.controller.ReconciliationLockManager;
 import io.strimzi.operator.common.controller.SimplifiedReconciliation;
+import io.strimzi.operator.common.http.Liveness;
+import io.strimzi.operator.common.http.Readiness;
 import io.strimzi.operator.common.metrics.ControllerMetricsHolder;
 import io.strimzi.operator.common.model.Labels;
 import io.strimzi.operator.common.model.NamespaceAndName;
+import io.strimzi.operator.common.operator.resource.concurrent.CrdOperator;
+import io.strimzi.operator.common.operator.resource.concurrent.SecretOperator;
 import io.strimzi.operator.user.operator.KafkaUserOperator;
 
 import java.util.ArrayList;
@@ -40,10 +45,10 @@ import java.util.concurrent.TimeoutException;
  * Kubernetes events and triggering the periodical reconciliations. The actual processing of the events is done by the
  * controller loop class.
  */
-public class UserController {
+public class UserController implements Liveness, Readiness {
     private static final ReconciliationLogger LOGGER = ReconciliationLogger.create(UserController.class);
     private static final String RESOURCE_KIND = "KafkaUser";
-    private static final long DEFAULT_RESYNC_PERIOD = 5 * 60 * 1_000L; // 5 minutes by default
+    private static final long DEFAULT_RESYNC_PERIOD_MS = 5 * 60 * 1_000L; // 5 minutes by default
 
     private final KafkaUserOperator userOperator;
     private final ControllerMetricsHolder metrics;
@@ -61,14 +66,23 @@ public class UserController {
     private final ScheduledExecutorService scheduledExecutor;
 
     /**
-     * Creates the User controller responsible for controlling users in a single namespace
+     * Creates the User controller responsible for controlling users in a single
+     * namespace
      *
      * @param config          User Operator configuration
-     * @param client          Kubernetes client
-     * @param userOperator    The User Operator which encapsulates the logic for updating the users
+     * @param secretOperator  For operating on secrets
+     * @param userCrdOperator For operating on KafkaUser resources
+     * @param userOperator    The User Operator which encapsulates the logic for
+     *                        updating the users
      * @param metricsProvider Metrics provider for handling metrics
      */
-    public UserController(UserOperatorConfig config, KubernetesClient client, KafkaUserOperator userOperator, MetricsProvider metricsProvider) {
+    public UserController(
+            UserOperatorConfig config,
+            SecretOperator secretOperator,
+            CrdOperator<KubernetesClient, KafkaUser, KafkaUserList> userCrdOperator,
+            KafkaUserOperator userOperator,
+            MetricsProvider metricsProvider) {
+
         this.userOperator = userOperator;
 
         // Store some useful settings into local fields
@@ -92,11 +106,11 @@ public class UserController {
         this.workQueue = new ControllerQueue(config.getWorkQueueSize(), this.metrics);
 
         // Secret informer and lister is used to get events about Secrets and get Secrets quickly
-        this.secretInformer = client.secrets().inNamespace(watchedNamespace).withLabels(secretSelector).inform();
+        this.secretInformer = secretOperator.informer(watchedNamespace, secretSelector, DEFAULT_RESYNC_PERIOD_MS);
         Lister<Secret> secretLister = new Lister<>(secretInformer.getIndexer());
 
         // KafkaUser informer and lister is used to get events about Users and get Users quickly
-        this.userInformer = Crds.kafkaUserOperation(client).inNamespace(watchedNamespace).withLabels(userSelector).inform();
+        this.userInformer = userCrdOperator.informer(watchedNamespace, userSelector, DEFAULT_RESYNC_PERIOD_MS);
         Lister<KafkaUser> userLister = new Lister<>(userInformer.getIndexer());
 
         // Creates the scheduled executor service used for periodical reconciliations and progress warnings
@@ -108,7 +122,7 @@ public class UserController {
         // Create a thread pool for the reconciliation loops and add the reconciliation loops
         this.threadPool = new ArrayList<>(config.getControllerThreadPoolSize());
         for (int i = 0; i < config.getControllerThreadPoolSize(); i++)  {
-            threadPool.add(new UserControllerLoop(RESOURCE_KIND + "-ControllerLoop-" + i, workQueue, lockManager, scheduledExecutor, client, userLister, secretLister, userOperator, metrics, config));
+            threadPool.add(new UserControllerLoop(RESOURCE_KIND + "-ControllerLoop-" + i, workQueue, lockManager, scheduledExecutor, userLister, secretLister, userCrdOperator, userOperator, metrics, config));
         }
     }
 
@@ -160,10 +174,6 @@ public class UserController {
         LOGGER.infoOp("Stopping scheduled executor service");
         scheduledExecutor.shutdownNow(); // We do not wait for termination
 
-        LOGGER.infoOp("Stopping informers");
-        secretInformer.stop();
-        userInformer.stop();
-
         LOGGER.infoOp("Stopping User Controller loops");
         threadPool.forEach(t -> {
             try {
@@ -172,6 +182,10 @@ public class UserController {
                 LOGGER.debugOp("Interrupted while stopping controller loop", e);
             }
         });
+
+        // Can't stop the informers before the controller, because the controllers depend on the indexers, which depend
+        // on the informers. So stopping the informers first would break the controller and cause errors.
+        InformerUtils.stopAll(5_000L, userInformer, secretInformer);
     }
 
     /**
@@ -179,62 +193,18 @@ public class UserController {
      */
     protected void start() {
         // Configure the event handler for the KafkaUser resources
-        this.userInformer.addEventHandlerWithResyncPeriod(new ResourceEventHandler<>() {
-            @Override
-            public void onAdd(KafkaUser user) {
-                metrics.resourceCounter(watchedNamespace).incrementAndGet(); // increases the resource counter
-
-                if (Annotations.isReconciliationPausedWithAnnotation(user)) {
-                    // New paused user is added => increase the paused resources counter
-                    metrics.pausedResourceCounter(user.getMetadata().getNamespace()).incrementAndGet();
-                }
-
-                enqueueKafkaUser(user, "ADDED");
-            }
-
-            @Override
-            public void onUpdate(KafkaUser oldUser, KafkaUser newUser) {
-                if (Annotations.isReconciliationPausedWithAnnotation(oldUser) && !Annotations.isReconciliationPausedWithAnnotation(newUser)) {
-                    // User is unpaused => decrement the counter
-                    metrics.pausedResourceCounter(watchedNamespace).decrementAndGet();
-                } else if (!Annotations.isReconciliationPausedWithAnnotation(oldUser) && Annotations.isReconciliationPausedWithAnnotation(newUser)) {
-                    // User is paused => increment the counter
-                    metrics.pausedResourceCounter(watchedNamespace).incrementAndGet();
-                }
-
-                enqueueKafkaUser(newUser, "MODIFIED");
-            }
-
-            @Override
-            public void onDelete(KafkaUser user, boolean deletedFinalStateUnknown) {
-                metrics.resourceCounter(user.getMetadata().getNamespace()).decrementAndGet(); // decreases the resource counter
-
-                if (Annotations.isReconciliationPausedWithAnnotation(user)) {
-                    // Paused user is deleted => decrease the paused resources counter
-                    metrics.pausedResourceCounter(watchedNamespace).decrementAndGet();
-                }
-
-                enqueueKafkaUser(user, "DELETED");
-            }
-        }, DEFAULT_RESYNC_PERIOD);
+        this.userInformer.addEventHandler(new KafkaUserEventHandler());
+        this.userInformer.exceptionHandler((isStarted, throwable) -> InformerUtils.loggingExceptionHandler("KafkaUser", isStarted, throwable));
 
         // Configure the event handler for Secrets
-        this.secretInformer.addEventHandlerWithResyncPeriod(new ResourceEventHandler<>() {
-            @Override
-            public void onAdd(Secret secret) {
-                enqueueUserSecret(secret, "ADDED");
-            }
+        this.secretInformer.addEventHandler(new SecretEventHandler());
+        this.userInformer.exceptionHandler((isStarted, throwable) -> InformerUtils.loggingExceptionHandler("Secret", isStarted, throwable));
 
-            @Override
-            public void onUpdate(Secret oldSecret, Secret newSecret) {
-                enqueueUserSecret(newSecret, "MODIFIED");
-            }
+        LOGGER.infoOp("Starting the KafkaUser informer");
+        userInformer.start();
 
-            @Override
-            public void onDelete(Secret secret, boolean deletedFinalStateUnknown) {
-                enqueueUserSecret(secret, "DELETED");
-            }
-        }, DEFAULT_RESYNC_PERIOD);
+        LOGGER.infoOp("Starting the Secret informer");
+        secretInformer.start();
 
         while (!isSynced())   {
             LOGGER.infoOp("Waiting for the informers to sync");
@@ -245,7 +215,7 @@ public class UserController {
             }
         }
 
-        // Start the controller loop threads
+        // Start the controller loop threads => they should be started only after the informers are synced
         LOGGER.infoOp("Starting User Controller loops");
         threadPool.forEach(AbstractControllerLoop::start);
 
@@ -258,6 +228,7 @@ public class UserController {
      *
      * @return  True when the controller is ready, false otherwise
      */
+    @Override
     public boolean isReady()    {
         boolean ready = true;
 
@@ -274,14 +245,18 @@ public class UserController {
      *
      * @return  True when the controller thread is alice, false otherwise
      */
+    @Override
     public boolean isAlive()    {
-        boolean ready = true;
+        boolean alive = true;
 
         for (UserControllerLoop t : threadPool) {
-            ready &= t.isAlive();
+            alive &= t.isAlive();
         }
 
-        return ready;
+        alive &= userInformer.isRunning();
+        alive &= secretInformer.isRunning();
+
+        return alive;
     }
 
     /**
@@ -312,6 +287,68 @@ public class UserController {
             } catch (InterruptedException | ExecutionException e) {
                 LOGGER.errorOp("Periodic reconciliation of {} resources for namespace {} failed", RESOURCE_KIND, watchedNamespace, e);
             }
+        }
+    }
+
+    /**
+     * Event handler used in the KafkaUser informer which decides what to do with the incoming events.
+     */
+    private class KafkaUserEventHandler implements ResourceEventHandler<KafkaUser> {
+        @Override
+        public void onAdd(KafkaUser user) {
+            metrics.resourceCounter(watchedNamespace).incrementAndGet(); // increases the resource counter
+
+            if (Annotations.isReconciliationPausedWithAnnotation(user)) {
+                // New paused user is added => increase the paused resources counter
+                metrics.pausedResourceCounter(user.getMetadata().getNamespace()).incrementAndGet();
+            }
+
+            enqueueKafkaUser(user, "ADDED");
+        }
+
+        @Override
+        public void onUpdate(KafkaUser oldUser, KafkaUser newUser) {
+            if (Annotations.isReconciliationPausedWithAnnotation(oldUser) && !Annotations.isReconciliationPausedWithAnnotation(newUser)) {
+                // User is unpaused => decrement the counter
+                metrics.pausedResourceCounter(watchedNamespace).decrementAndGet();
+            } else if (!Annotations.isReconciliationPausedWithAnnotation(oldUser) && Annotations.isReconciliationPausedWithAnnotation(newUser)) {
+                // User is paused => increment the counter
+                metrics.pausedResourceCounter(watchedNamespace).incrementAndGet();
+            }
+
+            enqueueKafkaUser(newUser, "MODIFIED");
+        }
+
+        @Override
+        public void onDelete(KafkaUser user, boolean deletedFinalStateUnknown) {
+            metrics.resourceCounter(user.getMetadata().getNamespace()).decrementAndGet(); // decreases the resource counter
+
+            if (Annotations.isReconciliationPausedWithAnnotation(user)) {
+                // Paused user is deleted => decrease the paused resources counter
+                metrics.pausedResourceCounter(watchedNamespace).decrementAndGet();
+            }
+
+            enqueueKafkaUser(user, "DELETED");
+        }
+    }
+
+    /**
+     * Event handler used in the Secret informer which decides what to do with the incoming events.
+     */
+    private class SecretEventHandler implements ResourceEventHandler<Secret> {
+        @Override
+        public void onAdd(Secret secret) {
+            enqueueUserSecret(secret, "ADDED");
+        }
+
+        @Override
+        public void onUpdate(Secret oldSecret, Secret newSecret) {
+            enqueueUserSecret(newSecret, "MODIFIED");
+        }
+
+        @Override
+        public void onDelete(Secret secret, boolean deletedFinalStateUnknown) {
+            enqueueUserSecret(secret, "DELETED");
         }
     }
 }

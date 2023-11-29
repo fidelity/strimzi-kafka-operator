@@ -41,7 +41,7 @@ For more information on the Kubernetes security profiles, see {K8sSecurityStanda
 In the following example, security context is configured for Kafka brokers in the `template` configuration of the `Kafka` resource.  
 Security context is specified at the pod and container level.
 
-[source,yaml]
+[source,yaml,subs="+attributes"]
 .Example `template` configuration for security context
 ----
 apiVersion: {KafkaApiVersion}
@@ -147,5 +147,4 @@ A `LocalHost` profile uses a profile defined in a file on the node.
 
 * {K8sSecurityContext} on Kubernetes
 * {K8sSecurityStandards} on Kubernetes (including profile descriptions)
-* xref:type-ContainerTemplate-reference[]
 

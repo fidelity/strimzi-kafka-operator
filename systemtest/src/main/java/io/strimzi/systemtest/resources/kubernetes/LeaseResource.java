@@ -5,7 +5,7 @@
 package io.strimzi.systemtest.resources.kubernetes;
 
 import io.fabric8.kubernetes.api.model.coordination.v1.Lease;
-import io.strimzi.systemtest.Constants;
+import io.strimzi.systemtest.TestConstants;
 import io.strimzi.systemtest.resources.ResourceType;
 
 import static io.strimzi.test.k8s.KubeClusterResource.kubeClient;
@@ -13,7 +13,7 @@ import static io.strimzi.test.k8s.KubeClusterResource.kubeClient;
 public class LeaseResource implements ResourceType<Lease> {
     @Override
     public String getKind() {
-        return Constants.LEASE;
+        return TestConstants.LEASE;
     }
 
     @Override
@@ -23,12 +23,17 @@ public class LeaseResource implements ResourceType<Lease> {
 
     @Override
     public void create(Lease resource) {
-        kubeClient().getClient().leases().resource(resource).createOrReplace();
+        kubeClient().getClient().leases().resource(resource).create();
     }
 
     @Override
     public void delete(Lease resource) {
         kubeClient().getClient().leases().resource(resource).delete();
+    }
+
+    @Override
+    public void update(Lease resource) {
+        kubeClient().getClient().leases().resource(resource).update();
     }
 
     @Override

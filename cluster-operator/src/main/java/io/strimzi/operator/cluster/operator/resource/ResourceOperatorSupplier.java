@@ -12,6 +12,7 @@ import io.strimzi.api.kafka.KafkaConnectorList;
 import io.strimzi.api.kafka.KafkaList;
 import io.strimzi.api.kafka.KafkaMirrorMaker2List;
 import io.strimzi.api.kafka.KafkaMirrorMakerList;
+import io.strimzi.api.kafka.KafkaNodePoolList;
 import io.strimzi.api.kafka.KafkaRebalanceList;
 import io.strimzi.api.kafka.model.Kafka;
 import io.strimzi.api.kafka.model.KafkaBridge;
@@ -20,7 +21,11 @@ import io.strimzi.api.kafka.model.KafkaConnector;
 import io.strimzi.api.kafka.model.KafkaMirrorMaker;
 import io.strimzi.api.kafka.model.KafkaMirrorMaker2;
 import io.strimzi.api.kafka.model.KafkaRebalance;
-import io.strimzi.operator.PlatformFeaturesAvailability;
+import io.strimzi.api.kafka.model.nodepool.KafkaNodePool;
+import io.strimzi.operator.cluster.PlatformFeaturesAvailability;
+import io.strimzi.operator.cluster.model.DefaultSharedEnvironmentProvider;
+import io.strimzi.operator.cluster.model.SharedEnvironmentProvider;
+import io.strimzi.operator.cluster.operator.assembly.PreventBrokerScaleDownCheck;
 import io.strimzi.operator.cluster.operator.resource.events.KubernetesRestartEventPublisher;
 import io.strimzi.operator.common.AdminClientProvider;
 import io.strimzi.operator.common.BackOff;
@@ -37,7 +42,6 @@ import io.strimzi.operator.common.operator.resource.IngressOperator;
 import io.strimzi.operator.common.operator.resource.NetworkPolicyOperator;
 import io.strimzi.operator.common.operator.resource.NodeOperator;
 import io.strimzi.operator.common.operator.resource.PodDisruptionBudgetOperator;
-import io.strimzi.operator.common.operator.resource.PodDisruptionBudgetV1Beta1Operator;
 import io.strimzi.operator.common.operator.resource.PodOperator;
 import io.strimzi.operator.common.operator.resource.PvcOperator;
 import io.strimzi.operator.common.operator.resource.RoleBindingOperator;
@@ -152,6 +156,11 @@ public class ResourceOperatorSupplier {
     public final CrdOperator<KubernetesClient, KafkaRebalance, KafkaRebalanceList> kafkaRebalanceOperator;
 
     /**
+     * KafkaNodePool CR operator
+     */
+    public final CrdOperator<KubernetesClient, KafkaNodePool, KafkaNodePoolList> kafkaNodePoolOperator;
+
+    /**
      * Strimzi Pod Set operator
      */
     public final StrimziPodSetOperator strimziPodSetOperator;
@@ -166,10 +175,6 @@ public class ResourceOperatorSupplier {
      */
     public final PodDisruptionBudgetOperator podDisruptionBudgetOperator;
 
-    /**
-     * PDB v1beta1 operator
-     */
-    public final PodDisruptionBudgetV1Beta1Operator podDisruptionBudgetV1Beta1Operator;
 
     /**
      * Pod operator
@@ -225,6 +230,16 @@ public class ResourceOperatorSupplier {
      * Restart Events publisher
      */
     public final KubernetesRestartEventPublisher restartEventsPublisher;
+
+    /**
+     * Shared environment provider
+     */
+    public final SharedEnvironmentProvider sharedEnvironmentProvider;
+
+    /**
+     * Broker Scale Down operations
+     */
+    public final PreventBrokerScaleDownCheck brokerScaleDownOperations;
 
     /**
      * Constructor
@@ -306,7 +321,6 @@ public class ResourceOperatorSupplier {
                 new ClusterRoleBindingOperator(vertx, client),
                 new NetworkPolicyOperator(vertx, client),
                 new PodDisruptionBudgetOperator(vertx, client),
-                new PodDisruptionBudgetV1Beta1Operator(vertx, client),
                 new PodOperator(vertx, client),
                 new IngressOperator(vertx, client),
                 pfa.hasBuilds() ? new BuildConfigOperator(vertx, client.adapt(OpenShiftClient.class)) : null,
@@ -318,14 +332,17 @@ public class ResourceOperatorSupplier {
                 new CrdOperator<>(vertx, client, KafkaConnector.class, KafkaConnectorList.class, KafkaConnector.RESOURCE_KIND),
                 new CrdOperator<>(vertx, client, KafkaMirrorMaker2.class, KafkaMirrorMaker2List.class, KafkaMirrorMaker2.RESOURCE_KIND),
                 new CrdOperator<>(vertx, client, KafkaRebalance.class, KafkaRebalanceList.class, KafkaRebalance.RESOURCE_KIND),
-                new StrimziPodSetOperator(vertx, client, operationTimeoutMs),
+                new CrdOperator<>(vertx, client, KafkaNodePool.class, KafkaNodePoolList.class, KafkaNodePool.RESOURCE_KIND),
+                new StrimziPodSetOperator(vertx, client),
                 new StorageClassOperator(vertx, client),
                 new NodeOperator(vertx, client),
                 zkScalerProvider,
                 metricsProvider,
                 adminClientProvider,
                 zlf,
-                restartEventPublisher);
+                restartEventPublisher,
+                new DefaultSharedEnvironmentProvider(),
+                new PreventBrokerScaleDownCheck());
     }
 
     /**
@@ -345,7 +362,6 @@ public class ResourceOperatorSupplier {
      * @param clusterRoleBindingOperator            Cluster Role Binding operator
      * @param networkPolicyOperator                 Network Policy operator
      * @param podDisruptionBudgetOperator           Pod Disruption Budget operator
-     * @param podDisruptionBudgetV1Beta1Operator    Pod Disruption Budget v1beta1 operator
      * @param podOperations                         Pod operator
      * @param ingressOperations                     Ingress operator
      * @param buildConfigOperations                 Build Config operator
@@ -357,6 +373,7 @@ public class ResourceOperatorSupplier {
      * @param kafkaConnectorOperator                KafkaConnector operator
      * @param mirrorMaker2Operator                  KafkaMirrorMaker2 operator
      * @param kafkaRebalanceOperator                KafkaRebalance operator
+     * @param kafkaNodePoolOperator                 kafkaNodePool operator
      * @param strimziPodSetOperator                 StrimziPodSet operator
      * @param storageClassOperator                  StorageClass operator
      * @param nodeOperator                          Node operator
@@ -365,6 +382,8 @@ public class ResourceOperatorSupplier {
      * @param adminClientProvider                   Kafka Admin client provider
      * @param zookeeperLeaderFinder                 ZooKeeper Leader Finder
      * @param restartEventsPublisher                Kubernetes Events publisher
+     * @param sharedEnvironmentProvider             Shared environment provider
+     * @param brokerScaleDownOperations             Broker scale down operations
      */
     @SuppressWarnings({"checkstyle:ParameterNumber"})
     public ResourceOperatorSupplier(ServiceOperator serviceOperations,
@@ -381,7 +400,6 @@ public class ResourceOperatorSupplier {
                                     ClusterRoleBindingOperator clusterRoleBindingOperator,
                                     NetworkPolicyOperator networkPolicyOperator,
                                     PodDisruptionBudgetOperator podDisruptionBudgetOperator,
-                                    PodDisruptionBudgetV1Beta1Operator podDisruptionBudgetV1Beta1Operator,
                                     PodOperator podOperations,
                                     IngressOperator ingressOperations,
                                     BuildConfigOperator buildConfigOperations,
@@ -393,6 +411,7 @@ public class ResourceOperatorSupplier {
                                     CrdOperator<KubernetesClient, KafkaConnector, KafkaConnectorList> kafkaConnectorOperator,
                                     CrdOperator<KubernetesClient, KafkaMirrorMaker2, KafkaMirrorMaker2List> mirrorMaker2Operator,
                                     CrdOperator<KubernetesClient, KafkaRebalance, KafkaRebalanceList> kafkaRebalanceOperator,
+                                    CrdOperator<KubernetesClient, KafkaNodePool, KafkaNodePoolList> kafkaNodePoolOperator,
                                     StrimziPodSetOperator strimziPodSetOperator,
                                     StorageClassOperator storageClassOperator,
                                     NodeOperator nodeOperator,
@@ -400,7 +419,9 @@ public class ResourceOperatorSupplier {
                                     MetricsProvider metricsProvider,
                                     AdminClientProvider adminClientProvider,
                                     ZookeeperLeaderFinder zookeeperLeaderFinder,
-                                    KubernetesRestartEventPublisher restartEventsPublisher) {
+                                    KubernetesRestartEventPublisher restartEventsPublisher,
+                                    SharedEnvironmentProvider sharedEnvironmentProvider,
+                                    PreventBrokerScaleDownCheck brokerScaleDownOperations) {
         this.serviceOperations = serviceOperations;
         this.routeOperations = routeOperations;
         this.imageStreamOperations = imageStreamOperations;
@@ -415,7 +436,6 @@ public class ResourceOperatorSupplier {
         this.clusterRoleBindingOperator = clusterRoleBindingOperator;
         this.networkPolicyOperator = networkPolicyOperator;
         this.podDisruptionBudgetOperator = podDisruptionBudgetOperator;
-        this.podDisruptionBudgetV1Beta1Operator = podDisruptionBudgetV1Beta1Operator;
         this.kafkaOperator = kafkaOperator;
         this.podOperations = podOperations;
         this.ingressOperations = ingressOperations;
@@ -428,6 +448,7 @@ public class ResourceOperatorSupplier {
         this.kafkaConnectorOperator = kafkaConnectorOperator;
         this.mirrorMaker2Operator = mirrorMaker2Operator;
         this.kafkaRebalanceOperator = kafkaRebalanceOperator;
+        this.kafkaNodePoolOperator = kafkaNodePoolOperator;
         this.strimziPodSetOperator = strimziPodSetOperator;
         this.nodeOperator = nodeOperator;
         this.zkScalerProvider = zkScalerProvider;
@@ -435,5 +456,7 @@ public class ResourceOperatorSupplier {
         this.adminClientProvider = adminClientProvider;
         this.zookeeperLeaderFinder = zookeeperLeaderFinder;
         this.restartEventsPublisher = restartEventsPublisher;
+        this.sharedEnvironmentProvider = sharedEnvironmentProvider;
+        this.brokerScaleDownOperations = brokerScaleDownOperations;
     }
 }

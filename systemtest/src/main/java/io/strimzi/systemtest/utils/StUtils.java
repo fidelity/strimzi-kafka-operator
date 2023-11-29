@@ -16,15 +16,11 @@ import io.fabric8.kubernetes.api.model.LabelSelector;
 import io.fabric8.kubernetes.api.model.Pod;
 import io.fabric8.kubernetes.api.model.Secret;
 import io.fabric8.kubernetes.api.model.SecretBuilder;
-import io.fabric8.kubernetes.api.model.apps.StatefulSetBuilder;
 import io.strimzi.api.kafka.model.ContainerEnvVar;
 import io.strimzi.api.kafka.model.ContainerEnvVarBuilder;
-import io.strimzi.api.kafka.model.KafkaResources;
-import io.strimzi.systemtest.Constants;
+import io.strimzi.systemtest.TestConstants;
 import io.strimzi.systemtest.Environment;
-import io.strimzi.systemtest.resources.crd.StrimziPodSetResource;
-import io.strimzi.systemtest.utils.kubeUtils.controllers.DeploymentUtils;
-import io.strimzi.systemtest.utils.kubeUtils.controllers.StatefulSetUtils;
+import io.strimzi.systemtest.resources.crd.KafkaResource;
 import io.strimzi.systemtest.utils.kubeUtils.controllers.StrimziPodSetUtils;
 import io.strimzi.test.TestUtils;
 import io.strimzi.test.k8s.KubeClusterResource;
@@ -230,7 +226,7 @@ public class StUtils {
     public static JsonArray expectedServiceDiscoveryInfo(int port, String protocol, String auth, boolean tls) {
         JsonObject jsonObject = new JsonObject();
         jsonObject.put("port", port);
-        jsonObject.put(Constants.TLS_LISTENER_DEFAULT_NAME, tls);
+        jsonObject.put(TestConstants.TLS_LISTENER_DEFAULT_NAME, tls);
         jsonObject.put("protocol", protocol);
         jsonObject.put("auth", auth);
 
@@ -256,16 +252,16 @@ public class StUtils {
     }
 
     /**
-     * Method for checking if JSON format logging is set for the {@code pods}
+     * Method for checking if JSON format logging is set for the {@code Pods}
      * @param namespaceName Namespace name
-     * @param pods snapshot of pods to be checked
+     * @param pods snapshot of Pods to be checked
      * @param containerName name of container from which to take the log
      */
     public static void checkLogForJSONFormat(String namespaceName, Map<String, String> pods, String containerName) {
         //this is only for decrease the number of records - kafka have record/line, operators record/11lines
         String tail = "--tail=" + (containerName.contains("operator") ? "100" : "10");
 
-        TestUtils.waitFor("for JSON log in " + pods, Constants.GLOBAL_POLL_INTERVAL_MEDIUM, Constants.GLOBAL_TIMEOUT, () -> {
+        TestUtils.waitFor("JSON log to be present in " + pods, TestConstants.GLOBAL_POLL_INTERVAL_MEDIUM, TestConstants.GLOBAL_TIMEOUT, () -> {
             boolean isJSON = false;
             for (String podName : pods.keySet()) {
                 String log = cmdKubeClient().namespace(namespaceName).execInCurrentNamespace(Level.TRACE, "logs", podName, "-c", containerName, tail).out();
@@ -274,7 +270,7 @@ public class StUtils {
 
                 // 2 is just in case we will take some JSON that is not part of the JSON format logging
                 if (!jsonArray.isEmpty() && jsonArray.size() >= 2) {
-                    LOGGER.info("JSON format logging successfully set for pod: {}", podName);
+                    LOGGER.info("JSON format logging successfully set for Pod: {}", podName);
                     isJSON = true;
                 }
             }
@@ -316,7 +312,7 @@ public class StUtils {
      * @param exceptedString log message to be checked
      */
     public static void waitUntilLogFromPodContainsString(String namespaceName, String podName, String containerName, String timeSince, String exceptedString) {
-        TestUtils.waitFor("log from pod contains excepted string:" + exceptedString, Constants.GLOBAL_POLL_INTERVAL, Constants.GLOBAL_TIMEOUT,
+        TestUtils.waitFor("log from Pod: " + namespaceName + "/" + podName + " to contain string: " + exceptedString, TestConstants.GLOBAL_POLL_INTERVAL, TestConstants.GLOBAL_TIMEOUT,
             () -> getLogFromPodByTime(namespaceName, podName, containerName, timeSince).contains(exceptedString));
     }
 
@@ -324,7 +320,7 @@ public class StUtils {
      * Change Deployment configuration before applying it. We set different namespace, log level and image pull policy.
      * It's mostly used for use cases where we use direct kubectl command instead of fabric8 calls to api.
      * @param deploymentFile loaded Strimzi deployment file
-     * @param namespace namespace where Strimzi should be installed
+     * @param namespace Namespace where Strimzi should be installed
      * @param strimziFeatureGatesValue feature gates value
      * @return deployment file content as String
      */
@@ -381,7 +377,7 @@ public class StUtils {
      * otherwise false
      */
     public static boolean isParallelTest(Object annotationHolder) {
-        return CONTAINS_ANNOTATION.apply(Constants.PARALLEL_TEST, annotationHolder);
+        return CONTAINS_ANNOTATION.apply(TestConstants.PARALLEL_TEST, annotationHolder);
     }
 
     /**
@@ -391,7 +387,7 @@ public class StUtils {
      * otherwise false
      */
     public static boolean isIsolatedTest(Object annotationHolder) {
-        return CONTAINS_ANNOTATION.apply(Constants.ISOLATED_TEST, annotationHolder);
+        return CONTAINS_ANNOTATION.apply(TestConstants.ISOLATED_TEST, annotationHolder);
     }
 
     /**
@@ -401,27 +397,7 @@ public class StUtils {
      * otherwise false
      */
     public static boolean isParallelNamespaceTest(Object annotationHolder) {
-        return CONTAINS_ANNOTATION.apply(Constants.PARALLEL_NAMESPACE, annotationHolder);
-    }
-
-    /**
-     * Checking if test case contains annotation {@link io.strimzi.systemtest.annotations.ParallelSuite}
-     * @param annotationHolder context of the test case
-     * @return true if test case contains annotation {@link io.strimzi.systemtest.annotations.ParallelSuite},
-     * otherwise false
-     */
-    public static boolean isParallelSuite(Object annotationHolder) {
-        return CONTAINS_ANNOTATION.apply(Constants.PARALLEL_SUITE, annotationHolder);
-    }
-
-    /**
-     * Checking if test case contains annotation {@link io.strimzi.systemtest.annotations.IsolatedSuite}
-     * @param annotationHolder context of the test case
-     * @return true if test case contains annotation {@link io.strimzi.systemtest.annotations.IsolatedSuite},
-     * otherwise false
-     */
-    public static boolean isIsolatedSuite(Object annotationHolder) {
-        return CONTAINS_ANNOTATION.apply(Constants.ISOLATED_SUITE, annotationHolder);
+        return CONTAINS_ANNOTATION.apply(TestConstants.PARALLEL_NAMESPACE, annotationHolder);
     }
 
     /**
@@ -431,20 +407,22 @@ public class StUtils {
      * @return single or parallel namespace based on cluster configuration
      */
     public static String getNamespaceBasedOnRbac(String namespace, ExtensionContext extensionContext) {
-        return Environment.isNamespaceRbacScope() ? namespace : extensionContext.getStore(ExtensionContext.Namespace.GLOBAL).get(Constants.NAMESPACE_KEY).toString();
+        return Environment.isNamespaceRbacScope() ? namespace : extensionContext.getStore(ExtensionContext.Namespace.GLOBAL).get(TestConstants.NAMESPACE_KEY).toString();
     }
 
     /**
      * Copies the image pull secret from the default namespace to the specified target namespace.
      * @param namespace the target namespace
      */
-    public static void copyImagePullSecret(String namespace) {
-        LOGGER.info("Checking if secret {} is in the default namespace", Environment.SYSTEM_TEST_STRIMZI_IMAGE_PULL_SECRET);
-        if (kubeClient("default").getSecret(Environment.SYSTEM_TEST_STRIMZI_IMAGE_PULL_SECRET) == null) {
-            throw new RuntimeException(Environment.SYSTEM_TEST_STRIMZI_IMAGE_PULL_SECRET + " is not in the default namespace!");
-        }
-        Secret pullSecret = kubeClient("default").getSecret(Environment.SYSTEM_TEST_STRIMZI_IMAGE_PULL_SECRET);
-        kubeClient(namespace).createSecret(new SecretBuilder()
+    public static void copyImagePullSecrets(String namespace) {
+        if (Environment.SYSTEM_TEST_STRIMZI_IMAGE_PULL_SECRET != null && !Environment.SYSTEM_TEST_STRIMZI_IMAGE_PULL_SECRET.isEmpty()) {
+            LOGGER.info("Checking if Secret: {} is in the default Namespace", Environment.SYSTEM_TEST_STRIMZI_IMAGE_PULL_SECRET);
+            if (kubeClient("default").getSecret(Environment.SYSTEM_TEST_STRIMZI_IMAGE_PULL_SECRET) == null) {
+                throw new RuntimeException(Environment.SYSTEM_TEST_STRIMZI_IMAGE_PULL_SECRET + " is not in the default Namespace!");
+            }
+            LOGGER.info("Creating pull Secret: {}/{}", namespace, Environment.SYSTEM_TEST_STRIMZI_IMAGE_PULL_SECRET);
+            Secret pullSecret = kubeClient("default").getSecret(Environment.SYSTEM_TEST_STRIMZI_IMAGE_PULL_SECRET);
+            kubeClient(namespace).createSecret(new SecretBuilder()
                 .withApiVersion("v1")
                 .withKind("Secret")
                 .withNewMetadata()
@@ -454,6 +432,25 @@ public class StUtils {
                 .withType("kubernetes.io/dockerconfigjson")
                 .withData(Collections.singletonMap(".dockerconfigjson", pullSecret.getData().get(".dockerconfigjson")))
                 .build());
+        }
+        if (Environment.CONNECT_BUILD_REGISTRY_SECRET != null && !Environment.CONNECT_BUILD_REGISTRY_SECRET.isEmpty()) {
+            LOGGER.info("Checking if Secret: {} is in the default Namespace", Environment.CONNECT_BUILD_REGISTRY_SECRET);
+            if (kubeClient("default").getSecret(Environment.CONNECT_BUILD_REGISTRY_SECRET) == null) {
+                throw new RuntimeException(Environment.CONNECT_BUILD_REGISTRY_SECRET + " is not in the default namespace!");
+            }
+            LOGGER.info("Creating pull Secret: {}/{}", namespace, Environment.CONNECT_BUILD_REGISTRY_SECRET);
+            Secret pullSecret = kubeClient("default").getSecret(Environment.CONNECT_BUILD_REGISTRY_SECRET);
+            kubeClient(namespace).createSecret(new SecretBuilder()
+                .withApiVersion("v1")
+                .withKind("Secret")
+                .withNewMetadata()
+                    .withName(Environment.CONNECT_BUILD_REGISTRY_SECRET)
+                    .withNamespace(namespace)
+                .endMetadata()
+                .withType("kubernetes.io/dockerconfigjson")
+                .withData(Collections.singletonMap(".dockerconfigjson", pullSecret.getData().get(".dockerconfigjson")))
+                .build());
+        }
     }
 
     /**
@@ -513,120 +510,21 @@ public class StUtils {
         return testClassPath.replace("io.strimzi.systemtest.", "");
     }
 
-    /**
-     * These methods are operating with StatefulSets or StrimziPodSets depending on ENV variable.
-     * They should be removed together with StatefulSets in the future - and we should use
-     * StrimziPodSets related methods instead.
-     */
-
-    public static void annotateStatefulSetOrStrimziPodSet(String namespaceName, String resourceName, Map<String, String> annotations) {
-        if (Environment.isStrimziPodSetEnabled()) {
-            StrimziPodSetResource.replaceStrimziPodSetInSpecificNamespace(resourceName,
-                strimziPodSet -> strimziPodSet.getMetadata().setAnnotations(annotations), namespaceName);
-        } else {
-            kubeClient(namespaceName)
-                .statefulSet(resourceName)
-                .edit(sts -> new StatefulSetBuilder(sts)
-                .editMetadata()
-                    .addToAnnotations(annotations)
-                .endMetadata()
-                .build());
-        }
-    }
-
-    public static Map<String, String> getAnnotationsOfStatefulSetOrStrimziPodSet(String namespaceName, String resourceName) {
-        if (Environment.isStrimziPodSetEnabled()) {
-            return StrimziPodSetResource.strimziPodSetClient().inNamespace(namespaceName).withName(resourceName).get().getMetadata().getAnnotations();
-        }
-        return kubeClient().getStatefulSet(namespaceName, resourceName).getMetadata().getAnnotations();
-    }
-
-    public static Map<String, String> getLabelsOfStatefulSetOrStrimziPodSet(String namespaceName, String resourceName) {
-        if (Environment.isStrimziPodSetEnabled()) {
-            return StrimziPodSetResource.strimziPodSetClient().inNamespace(namespaceName).withName(resourceName).get().getMetadata().getLabels();
-        }
-        return kubeClient().getStatefulSet(namespaceName, resourceName).getMetadata().getLabels();
-    }
-
-    public static void waitForStatefulSetOrStrimziPodSetLabelsChange(String namespaceName, String resourceName, Map<String, String> labels) {
-        if (Environment.isStrimziPodSetEnabled()) {
-            StrimziPodSetUtils.waitForStrimziPodSetLabelsChange(namespaceName, resourceName, labels);
-        } else {
-            StatefulSetUtils.waitForStatefulSetLabelsChange(namespaceName, resourceName, labels);
-        }
-    }
-
-    public static void waitForStatefulSetOrStrimziPodSetLabelsDeletion(String namespaceName, String resourceName, String... labelKeys) {
-        if (Environment.isStrimziPodSetEnabled()) {
-            StrimziPodSetUtils.waitForStrimziPodSetLabelsDeletion(namespaceName, resourceName, labelKeys);
-        } else {
-            StatefulSetUtils.waitForStatefulSetLabelsDeletion(namespaceName, resourceName, labelKeys);
-        }
-    }
-
-    public static Affinity getStatefulSetOrStrimziPodSetAffinity(String namespaceName, String resourceName) {
-        if (Environment.isStrimziPodSetEnabled()) {
-            Pod firstPod = StrimziPodSetUtils.getFirstPodFromSpec(namespaceName, resourceName);
-            return firstPod.getSpec().getAffinity();
-        } else {
-            return kubeClient().getStatefulSet(namespaceName, resourceName).getSpec().getTemplate().getSpec().getAffinity();
-        }
-    }
-
-    public static void deleteStrimziPodSetOrStatefulSet(String namespaceName, String resourceName) {
-        if (Environment.isStrimziPodSetEnabled()) {
-            StrimziPodSetResource.strimziPodSetClient().inNamespace(namespaceName).withName(resourceName).delete();
-        } else {
-            kubeClient(namespaceName).deleteStatefulSet(resourceName);
-        }
-    }
-
-    public static void waitForStrimziPodSetOrStatefulSetRecovery(String namespaceName, String resourceName, String resourceUID) {
-        if (Environment.isStrimziPodSetEnabled()) {
-            StrimziPodSetUtils.waitForStrimziPodSetRecovery(namespaceName, resourceName, resourceUID);
-        } else {
-            StatefulSetUtils.waitForStatefulSetRecovery(namespaceName, resourceName, resourceUID);
-        }
-    }
-
-    public static void waitForStrimziPodSetOrStatefulSetAndPodsReady(String namespaceName, String resourceName, int expectPods) {
-        if (Environment.isStrimziPodSetEnabled()) {
-            StrimziPodSetUtils.waitForAllStrimziPodSetAndPodsReady(namespaceName, resourceName, expectPods);
-        } else {
-            StatefulSetUtils.waitForAllStatefulSetPodsReady(namespaceName, resourceName, expectPods);
-        }
-    }
-
-    public static String getStrimziPodSetOrStatefulSetUID(String namespaceName, String resourceName) {
-        if (Environment.isStrimziPodSetEnabled()) {
-            return StrimziPodSetResource.strimziPodSetClient().inNamespace(namespaceName).withName(resourceName).get().getMetadata().getUid();
-        }
-        return kubeClient(namespaceName).getStatefulSetUid(resourceName);
-    }
-
     public static Affinity getDeploymentOrStrimziPodSetAffinity(String namespaceName, String resourceName) {
-        if (Environment.isStableConnectIdentitiesEnabled()) {
-            Pod firstPod = StrimziPodSetUtils.getFirstPodFromSpec(namespaceName, resourceName);
-            return firstPod.getSpec().getAffinity();
-        } else {
-            return kubeClient().getDeployment(namespaceName, resourceName).getSpec().getTemplate().getSpec().getAffinity();
-        }
+        Pod firstPod = StrimziPodSetUtils.getFirstPodFromSpec(namespaceName, resourceName);
+        return firstPod.getSpec().getAffinity();
     }
 
     public static void waitTillStrimziPodSetOrDeploymentRolled(final String namespaceName, final String depName,
                                                                final int expectPods, final Map<String, String> snapShot,
                                                                final LabelSelector labelSelector) {
-        if (Environment.isStableConnectIdentitiesEnabled()) {
-            RollingUpdateUtils.waitTillComponentHasRolled(namespaceName, labelSelector, snapShot);
-            RollingUpdateUtils.waitForComponentAndPodsReady(namespaceName, labelSelector, expectPods);
-        } else {
-            DeploymentUtils.waitTillDepHasRolled(namespaceName, depName, expectPods, snapShot);
-        }
+        RollingUpdateUtils.waitTillComponentHasRolled(namespaceName, labelSelector, snapShot);
+        RollingUpdateUtils.waitForComponentAndPodsReady(namespaceName, labelSelector, expectPods);
     }
 
     /**
-     * Returns a list of names of ConfigMaps with broker configuration files. For StatefulSets, the list has only one
-     * item with the shared ConfigMap. For StrimziPodSets, it should be a ConfigMap per broker.
+     * Returns a list of names of ConfigMaps with broker configuration files.
+     * For StrimziPodSets, it should be a ConfigMap per broker.
      *
      * @param kafkaClusterName  Name of the Kafka cluster
      * @param replicas          Number of Kafka replicas
@@ -636,23 +534,19 @@ public class StUtils {
     public static List<String> getKafkaConfigurationConfigMaps(String kafkaClusterName, int replicas)    {
         List<String> cmNames = new ArrayList<>(replicas);
 
-        if (Environment.isStrimziPodSetEnabled())   {
-            for (int i = 0; i < replicas; i++)  {
-                cmNames.add(KafkaResources.kafkaPodName(kafkaClusterName, i));
-            }
-        } else {
-            cmNames.add(KafkaResources.kafkaMetricsAndLogConfigMapName(kafkaClusterName));
+        for (int i = 0; i < replicas; i++)  {
+            cmNames.add(KafkaResource.getKafkaPodName(kafkaClusterName, i));
         }
 
         return cmNames;
     }
     public static void waitUntilSuppliersAreMatching(final Supplier<?> sup, final Supplier<?> anotherSup) {
-        TestUtils.waitFor(sup.get() + " is matching with" + anotherSup.get(), Constants.GLOBAL_POLL_INTERVAL,
-                Constants.GLOBAL_STATUS_TIMEOUT, () -> sup.get().equals(anotherSup.get()));
+        TestUtils.waitFor(sup.get() + " is matching with" + anotherSup.get(), TestConstants.GLOBAL_POLL_INTERVAL,
+                TestConstants.GLOBAL_STATUS_TIMEOUT, () -> sup.get().equals(anotherSup.get()));
     }
 
     public static void waitUntilSupplierIsSatisfied(final BooleanSupplier sup) {
-        TestUtils.waitFor(sup.getAsBoolean() + " is satisfied", Constants.GLOBAL_POLL_INTERVAL,
-                Constants.GLOBAL_STATUS_TIMEOUT, sup);
+        TestUtils.waitFor(sup.getAsBoolean() + " is satisfied", TestConstants.GLOBAL_POLL_INTERVAL,
+                TestConstants.GLOBAL_STATUS_TIMEOUT, sup);
     }
 }

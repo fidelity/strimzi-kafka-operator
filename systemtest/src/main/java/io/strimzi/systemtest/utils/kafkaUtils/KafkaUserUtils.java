@@ -7,9 +7,15 @@ package io.strimzi.systemtest.utils.kafkaUtils;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 import com.fasterxml.jackson.dataformat.yaml.YAMLMapper;
+import io.fabric8.kubernetes.api.model.Secret;
+import io.fabric8.kubernetes.api.model.SecretBuilder;
+import io.strimzi.api.kafka.model.KafkaResources;
 import io.strimzi.api.kafka.model.KafkaUser;
+import io.strimzi.api.kafka.model.KafkaUserScramSha512ClientAuthenticationBuilder;
 import io.strimzi.api.kafka.model.KafkaUserSpec;
-import io.strimzi.systemtest.Constants;
+import io.strimzi.api.kafka.model.PasswordBuilder;
+import io.strimzi.systemtest.TestConstants;
+import io.strimzi.systemtest.cli.KafkaCmdClient;
 import io.strimzi.systemtest.resources.ResourceManager;
 import io.strimzi.systemtest.resources.ResourceOperation;
 import io.strimzi.systemtest.resources.crd.KafkaUserResource;
@@ -17,6 +23,7 @@ import io.strimzi.systemtest.utils.kubeUtils.objects.SecretUtils;
 import io.strimzi.test.TestUtils;
 import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
+import org.junit.jupiter.api.extension.ExtensionContext;
 
 import java.io.File;
 import java.io.IOException;
@@ -56,36 +63,36 @@ public class KafkaUserUtils {
     }
 
     public static void waitForKafkaUserDeletion(final String namespaceName, String userName) {
-        LOGGER.info("Waiting for KafkaUser deletion {}", userName);
-        TestUtils.waitFor("KafkaUser deletion " + userName, Constants.POLL_INTERVAL_FOR_RESOURCE_READINESS, DELETION_TIMEOUT,
+        LOGGER.info("Waiting for KafkaUser: {}/{} deletion", namespaceName, userName);
+        TestUtils.waitFor("deletion of KafkaUser: " + namespaceName + "/" + userName, TestConstants.POLL_INTERVAL_FOR_RESOURCE_READINESS, DELETION_TIMEOUT,
             () -> {
                 if (KafkaUserResource.kafkaUserClient().inNamespace(namespaceName).withName(userName).get() == null) {
                     return true;
                 } else {
-                    LOGGER.warn("KafkaUser {} is not deleted yet! Triggering force delete by cmd client!", userName);
+                    LOGGER.warn("KafkaUser: {}/{} is not deleted yet! Triggering force delete via cmd client!", namespaceName, userName);
                     cmdKubeClient().deleteByName(KafkaUser.RESOURCE_KIND, userName);
                     return false;
                 }
             },
             () -> LOGGER.info(KafkaUserResource.kafkaUserClient().inNamespace(namespaceName).withName(userName).get())
         );
-        LOGGER.info("KafkaUser {} deleted", userName);
+        LOGGER.info("KafkaUser: {}/{} deleted", namespaceName, userName);
     }
 
     public static void waitForKafkaUserIncreaseObserverGeneration(String namespaceName, long observation, String userName) {
         TestUtils.waitFor("increase observation generation from " + observation + " for user " + userName,
-            Constants.GLOBAL_POLL_INTERVAL, Constants.GLOBAL_STATUS_TIMEOUT,
+            TestConstants.GLOBAL_POLL_INTERVAL, TestConstants.GLOBAL_STATUS_TIMEOUT,
             () -> observation < KafkaUserResource.kafkaUserClient()
                 .inNamespace(namespaceName).withName(userName).get().getStatus().getObservedGeneration());
     }
 
     public static void waitUntilKafkaUserStatusConditionIsPresent(String namespaceName, String userName) {
-        LOGGER.info("Wait until KafkaUser {} status is available", userName);
-        TestUtils.waitFor("KafkaUser " + userName + " status is available", Constants.GLOBAL_POLL_INTERVAL, Constants.GLOBAL_TIMEOUT,
+        LOGGER.info("Waiting for KafkaUser: {}/{} status to be available", namespaceName, userName);
+        TestUtils.waitFor("KafkaUser " + userName + " status to be available", TestConstants.GLOBAL_POLL_INTERVAL, TestConstants.GLOBAL_TIMEOUT,
             () -> KafkaUserResource.kafkaUserClient().inNamespace(namespaceName).withName(userName).get().getStatus().getConditions() != null,
             () -> LOGGER.info(KafkaUserResource.kafkaUserClient().inNamespace(namespaceName).withName(userName).get())
         );
-        LOGGER.info("KafkaUser {} status is available", userName);
+        LOGGER.info("KafkaUser: {}/{} status is available", namespaceName, userName);
     }
 
     /**
@@ -122,19 +129,19 @@ public class KafkaUserUtils {
     public static void waitForAllUsersWithPrefixReady(String namespaceName, String usersPrefix) {
         LOGGER.info("Waiting for all users with prefix: {} to become ready", usersPrefix);
 
-        TestUtils.waitFor("all users to become ready", Constants.GLOBAL_POLL_INTERVAL_MEDIUM, Constants.GLOBAL_TIMEOUT, () -> {
+        TestUtils.waitFor("all users to become ready", TestConstants.GLOBAL_POLL_INTERVAL_MEDIUM, TestConstants.GLOBAL_TIMEOUT, () -> {
             List<KafkaUser> listOfUsers = KafkaUserResource.kafkaUserClient().inNamespace(namespaceName).list().getItems().stream().filter(kafkaUser -> kafkaUser.getMetadata().getName().startsWith(usersPrefix)).toList();
             try {
                 listOfUsers = listOfUsers.stream().filter(kafkaUser -> !(kafkaUser.getStatus().getConditions().stream().anyMatch(condition -> condition.getType().equals(Ready.toString()) && condition.getStatus().equals("True")))).toList();
                 if (listOfUsers.size() != 0) {
-                    LOGGER.warn("There are still {} users with prefix {}, which are not in {} state", listOfUsers.size(), usersPrefix, Ready.toString());
+                    LOGGER.warn("There are still {} users with prefix: {}, which are not in {} state", listOfUsers.size(), usersPrefix, Ready.toString());
                     return false;
                 }
-            } catch (Exception e) {
-                LOGGER.warn("There are still users with prefix {}, which are not in {} state", usersPrefix, Ready.toString());
+            } catch (RuntimeException e) {
+                LOGGER.warn("There are still users with prefix: {}, which are not in {} state", usersPrefix, Ready.toString());
                 return false;
             }
-            LOGGER.info("All KafkaUsers with prefix {} are ready", usersPrefix);
+            LOGGER.info("All KafkaUsers with prefix: {} are ready", usersPrefix);
             return true;
         }, () -> LOGGER.error("Failed to wait for readiness state of these users: {}",
                 KafkaUserResource.kafkaUserClient().inNamespace(namespaceName).list().getItems().stream().filter(kafkaUser -> kafkaUser.getMetadata().getName().startsWith(usersPrefix)).toList()));
@@ -149,9 +156,9 @@ public class KafkaUserUtils {
      * @param desiredUserSpec desired KafkaUserSpec for which we are waiting for
      */
     public static void waitForConfigToBeChangedInAllUsersWithPrefix(String namespaceName, String usersPrefix, KafkaUserSpec desiredUserSpec) {
-        LOGGER.info("Waiting for all users with prefix: {} containing desired config", usersPrefix);
+        LOGGER.info("Waiting for all users with prefix: {} to contain desired config", usersPrefix);
 
-        TestUtils.waitFor("all users to become ready", Constants.GLOBAL_POLL_INTERVAL_MEDIUM, Constants.GLOBAL_TIMEOUT, () -> {
+        TestUtils.waitFor("all users to become ready", TestConstants.GLOBAL_POLL_INTERVAL_MEDIUM, TestConstants.GLOBAL_TIMEOUT, () -> {
             List<KafkaUser> listOfUsers = KafkaUserResource.kafkaUserClient().inNamespace(namespaceName).list().getItems().stream().filter(kafkaUser -> kafkaUser.getMetadata().getName().startsWith(usersPrefix)).toList();
 
             listOfUsers = listOfUsers.stream().filter(kafkaUser -> !kafkaUser.getSpec().equals(desiredUserSpec)).toList();
@@ -161,9 +168,57 @@ public class KafkaUserUtils {
                 return false;
             }
 
-            LOGGER.info("All KafkaUsers with prefix {} are containing desired config", usersPrefix);
+            LOGGER.info("All KafkaUsers with prefix: {} are containing desired config", usersPrefix);
             return true;
         }, () -> LOGGER.error("Failed to wait for readiness state of these users: {}",
                 KafkaUserResource.kafkaUserClient().inNamespace(namespaceName).list().getItems().stream().filter(kafkaUser -> kafkaUser.getMetadata().getName().startsWith(usersPrefix)).toList()));
+    }
+
+    /**
+     * Method which waits for {@code userName} KafkaUser custom resource to be mapped into kafka resource 'user' in {@code clusterName}
+     * Kafka Cluster residing in {@code namespace} namespace, by usage of scripts executed from {@code scraperPodName} Pod.
+     *
+     * @param namespace name of namespace, where all used resources (Kafka Cluster, KafkaUser, scraping Pod) should reside
+     * @param userName prefix of KafkaUsers for which KafkaUserSpec will be checked
+     * @param clusterName Kafka Cluster name
+     * @param scraperPodName name of the Pod used to execute kafka scripts in order to verify presence of kafka 'user' resource
+     */
+    public static void waitForKafkaUserMappingIntoKafkaResource(String namespace, String userName, String clusterName, String scraperPodName) {
+        LOGGER.info("Waiting for KafkaUser: {}/{} to be mapped into Kafka: {}/{} resource user", namespace, userName, namespace, clusterName);
+        TestUtils.waitFor("KafkaUser CR mapping into a Kafka user resource", TestConstants.GLOBAL_POLL_INTERVAL, TestConstants.GLOBAL_TIMEOUT,
+            () -> {
+                String getUserResult = KafkaCmdClient.describeUserUsingPodCli(namespace, scraperPodName, KafkaResources.plainBootstrapAddress(clusterName), "CN=" + userName);
+                return getUserResult.contains(userName);
+            });
+    }
+
+    public static void modifyKafkaUserPasswordWithNewSecret(String ns, String kafkaUserResourceName, String customSecretSource, String customPassword, ExtensionContext extensionContext) {
+
+        Secret userDefinedSecret = new SecretBuilder()
+            .withNewMetadata()
+                .withName(customSecretSource)
+                .withNamespace(ns)
+            .endMetadata()
+            .addToData("password", customPassword)
+            .build();
+
+        ResourceManager.getInstance().createResourceWithWait(extensionContext, userDefinedSecret);
+
+        KafkaUserResource.replaceUserResourceInSpecificNamespace(kafkaUserResourceName, ku -> {
+
+            ku.getSpec().setAuthentication(
+                new KafkaUserScramSha512ClientAuthenticationBuilder()
+                    .withPassword(
+                        new PasswordBuilder()
+                            .editOrNewValueFrom()
+                                .withNewSecretKeyRef("password", customSecretSource, false)
+                            .endValueFrom()
+                            .build()
+                    )
+                    .build()
+            );
+        }, ns);
+
+        waitForKafkaUserReady(ns, kafkaUserResourceName);
     }
 }

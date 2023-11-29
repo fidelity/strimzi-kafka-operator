@@ -20,14 +20,12 @@ import io.strimzi.api.kafka.model.EntityTopicOperatorSpec;
 import io.strimzi.api.kafka.model.JvmOptions;
 import io.strimzi.api.kafka.model.Kafka;
 import io.strimzi.api.kafka.model.KafkaResources;
-import io.strimzi.api.kafka.model.Probe;
 import io.strimzi.api.kafka.model.ProbeBuilder;
 import io.strimzi.api.kafka.model.template.ResourceTemplate;
 import io.strimzi.operator.cluster.ClusterOperatorConfig;
 import io.strimzi.operator.cluster.model.logging.LoggingModel;
 import io.strimzi.operator.cluster.model.logging.SupportsLogging;
 import io.strimzi.operator.cluster.model.securityprofiles.ContainerSecurityProviderContextImpl;
-import io.strimzi.operator.common.MetricsAndLogging;
 import io.strimzi.operator.common.Reconciliation;
 
 import java.util.ArrayList;
@@ -63,10 +61,6 @@ public class EntityTopicOperator extends AbstractModel implements SupportsLoggin
 
     /* test */ static final String ENV_VAR_TLS_ENABLED = "STRIMZI_TLS_ENABLED";
 
-    private static final Probe DEFAULT_HEALTHCHECK_OPTIONS = new ProbeBuilder()
-            .withInitialDelaySeconds(EntityTopicOperatorSpec.DEFAULT_HEALTHCHECK_DELAY)
-            .withTimeoutSeconds(EntityTopicOperatorSpec.DEFAULT_HEALTHCHECK_TIMEOUT).build();
-
     // Volume name of the temporary volume used by the TO container
     // Because the container shares the pod with other containers, it needs to have unique name
     /* test */ static final String TOPIC_OPERATOR_TMP_DIRECTORY_DEFAULT_VOLUME_NAME = "strimzi-to-tmp";
@@ -74,6 +68,7 @@ public class EntityTopicOperator extends AbstractModel implements SupportsLoggin
     // Kafka bootstrap servers and Zookeeper nodes can't be specified in the JSON
     /* test */ String kafkaBootstrapServers;
     /* test */ String zookeeperConnect;
+    private boolean unidirectionalTopicOperator;
 
     private String watchedNamespace;
     /* test */ int reconciliationIntervalMs;
@@ -89,20 +84,10 @@ public class EntityTopicOperator extends AbstractModel implements SupportsLoggin
     /**
      * @param reconciliation   The reconciliation
      * @param resource Kubernetes resource with metadata containing the namespace and cluster name
+     * @param sharedEnvironmentProvider Shared environment provider
      */
-    protected EntityTopicOperator(Reconciliation reconciliation, HasMetadata resource) {
-        super(reconciliation, resource, resource.getMetadata().getName() + NAME_SUFFIX, COMPONENT_TYPE);
-
-        this.readinessPath = "/";
-        this.readinessProbeOptions = DEFAULT_HEALTHCHECK_OPTIONS;
-        this.livenessPath = "/";
-        this.livenessProbeOptions = DEFAULT_HEALTHCHECK_OPTIONS;
-
-        // new KafkaStreamsTopicStore needs a bit more to start
-        this.startupProbeOptions = new ProbeBuilder()
-                .withPeriodSeconds(10)
-                .withFailureThreshold(12)
-                .build();
+    protected EntityTopicOperator(Reconciliation reconciliation, HasMetadata resource, SharedEnvironmentProvider sharedEnvironmentProvider) {
+        super(reconciliation, resource, resource.getMetadata().getName() + NAME_SUFFIX, COMPONENT_TYPE, sharedEnvironmentProvider);
 
         // create a default configuration
         this.kafkaBootstrapServers = KafkaResources.bootstrapServiceName(cluster) + ":" + KafkaCluster.REPLICATION_PORT;
@@ -119,20 +104,39 @@ public class EntityTopicOperator extends AbstractModel implements SupportsLoggin
      *
      * @param reconciliation The reconciliation
      * @param kafkaAssembly desired resource with cluster configuration containing the Entity Topic Operator one
+     * @param sharedEnvironmentProvider Shared environment provider
      *
      * @return Entity Topic Operator instance, null if not configured
      */
-    public static EntityTopicOperator fromCrd(Reconciliation reconciliation, Kafka kafkaAssembly) {
+    public static EntityTopicOperator fromCrd(Reconciliation reconciliation, Kafka kafkaAssembly, SharedEnvironmentProvider sharedEnvironmentProvider) {
+        return fromCrd(reconciliation, kafkaAssembly, sharedEnvironmentProvider, false);
+    }
+
+    /**
+     * Create an Entity Topic Operator from given desired resource. When Topic Operator (Or Entity Operator) are not
+     * enabled, it returns null.
+     * @param reconciliation The reconciliation
+     * @param kafkaAssembly desired resource with cluster configuration containing the Entity Topic Operator one
+     *                      @param sharedEnvironmentProvider Shared environment provider
+     * @param unidirectionalTopicOperator Indicates whether the UTO should be used.
+     *
+     * @return Entity Topic Operator instance, null if not configured
+     */
+    public static EntityTopicOperator fromCrd(Reconciliation reconciliation,
+                                              Kafka kafkaAssembly,
+                                              SharedEnvironmentProvider sharedEnvironmentProvider,
+                                              boolean unidirectionalTopicOperator) {
         if (kafkaAssembly.getSpec().getEntityOperator() != null
                 && kafkaAssembly.getSpec().getEntityOperator().getTopicOperator() != null) {
             EntityTopicOperatorSpec topicOperatorSpec = kafkaAssembly.getSpec().getEntityOperator().getTopicOperator();
-            EntityTopicOperator result = new EntityTopicOperator(reconciliation, kafkaAssembly);
+            EntityTopicOperator result = new EntityTopicOperator(reconciliation, kafkaAssembly, sharedEnvironmentProvider);
 
             String image = topicOperatorSpec.getImage();
             if (image == null) {
                 image = System.getenv().getOrDefault(ClusterOperatorConfig.STRIMZI_DEFAULT_TOPIC_OPERATOR_IMAGE, "quay.io/strimzi/operator:latest");
             }
             result.image = image;
+            result.unidirectionalTopicOperator = unidirectionalTopicOperator;
             result.watchedNamespace = topicOperatorSpec.getWatchedNamespace() != null ? topicOperatorSpec.getWatchedNamespace() : kafkaAssembly.getMetadata().getNamespace();
             result.reconciliationIntervalMs = topicOperatorSpec.getReconciliationIntervalSeconds() * 1_000;
             result.zookeeperSessionTimeoutMs = topicOperatorSpec.getZookeeperSessionTimeoutSeconds() * 1_000;
@@ -141,15 +145,9 @@ public class EntityTopicOperator extends AbstractModel implements SupportsLoggin
             result.gcLoggingEnabled = topicOperatorSpec.getJvmOptions() == null ? JvmOptions.DEFAULT_GC_LOGGING_ENABLED : topicOperatorSpec.getJvmOptions().isGcLoggingEnabled();
             result.jvmOptions = topicOperatorSpec.getJvmOptions();
             result.resources = topicOperatorSpec.getResources();
-            if (topicOperatorSpec.getStartupProbe() != null) {
-                result.startupProbeOptions = topicOperatorSpec.getStartupProbe();
-            }
-            if (topicOperatorSpec.getReadinessProbe() != null) {
-                result.readinessProbeOptions = topicOperatorSpec.getReadinessProbe();
-            }
-            if (topicOperatorSpec.getLivenessProbe() != null) {
-                result.livenessProbeOptions = topicOperatorSpec.getLivenessProbe();
-            }
+            result.readinessProbeOptions = ProbeUtils.extractReadinessProbeOptionsOrDefault(topicOperatorSpec, EntityOperator.DEFAULT_HEALTHCHECK_OPTIONS);
+            result.livenessProbeOptions = ProbeUtils.extractLivenessProbeOptionsOrDefault(topicOperatorSpec, EntityOperator.DEFAULT_HEALTHCHECK_OPTIONS);
+            result.startupProbeOptions = ProbeUtils.extractStartupProbeOptionsOrDefault(topicOperatorSpec, new ProbeBuilder().withPeriodSeconds(10).withFailureThreshold(12).build());
 
             if (kafkaAssembly.getSpec().getEntityOperator().getTemplate() != null)  {
                 result.templateRoleBinding = kafkaAssembly.getSpec().getEntityOperator().getTemplate().getTopicOperatorRoleBinding();
@@ -162,6 +160,7 @@ public class EntityTopicOperator extends AbstractModel implements SupportsLoggin
     }
 
     protected Container createContainer(ImagePullPolicy imagePullPolicy) {
+
         return ContainerUtils.createContainer(
                 TOPIC_OPERATOR_CONTAINER_NAME,
                 image,
@@ -171,9 +170,9 @@ public class EntityTopicOperator extends AbstractModel implements SupportsLoggin
                 getEnvVars(),
                 List.of(ContainerUtils.createContainerPort(HEALTHCHECK_PORT_NAME, HEALTHCHECK_PORT)),
                 getVolumeMounts(),
-                ProbeGenerator.httpProbe(livenessProbeOptions, livenessPath + "healthy", HEALTHCHECK_PORT_NAME),
-                ProbeGenerator.httpProbe(readinessProbeOptions, readinessPath + "ready", HEALTHCHECK_PORT_NAME),
-                ProbeGenerator.httpProbe(startupProbeOptions, livenessPath + "healthy", HEALTHCHECK_PORT_NAME),
+                ProbeUtils.httpProbe(livenessProbeOptions, "/healthy", HEALTHCHECK_PORT_NAME),
+                ProbeUtils.httpProbe(readinessProbeOptions, "/ready", HEALTHCHECK_PORT_NAME),
+                ProbeUtils.httpProbe(startupProbeOptions, "/healthy", HEALTHCHECK_PORT_NAME),
                 imagePullPolicy,
                 null
         );
@@ -183,18 +182,20 @@ public class EntityTopicOperator extends AbstractModel implements SupportsLoggin
         List<EnvVar> varList = new ArrayList<>();
         varList.add(ContainerUtils.createEnvVar(ENV_VAR_RESOURCE_LABELS, resourceLabels));
         varList.add(ContainerUtils.createEnvVar(ENV_VAR_KAFKA_BOOTSTRAP_SERVERS, kafkaBootstrapServers));
-        varList.add(ContainerUtils.createEnvVar(ENV_VAR_ZOOKEEPER_CONNECT, zookeeperConnect));
         varList.add(ContainerUtils.createEnvVar(ENV_VAR_WATCHED_NAMESPACE, watchedNamespace));
+        if (!this.unidirectionalTopicOperator) {
+            varList.add(ContainerUtils.createEnvVar(ENV_VAR_ZOOKEEPER_CONNECT, zookeeperConnect));
+            varList.add(ContainerUtils.createEnvVar(ENV_VAR_ZOOKEEPER_SESSION_TIMEOUT_MS, Integer.toString(zookeeperSessionTimeoutMs)));
+            varList.add(ContainerUtils.createEnvVar(ENV_VAR_TOPIC_METADATA_MAX_ATTEMPTS, String.valueOf(topicMetadataMaxAttempts)));
+        }
         varList.add(ContainerUtils.createEnvVar(ENV_VAR_FULL_RECONCILIATION_INTERVAL_MS, Integer.toString(reconciliationIntervalMs)));
-        varList.add(ContainerUtils.createEnvVar(ENV_VAR_ZOOKEEPER_SESSION_TIMEOUT_MS, Integer.toString(zookeeperSessionTimeoutMs)));
-        varList.add(ContainerUtils.createEnvVar(ENV_VAR_TOPIC_METADATA_MAX_ATTEMPTS, String.valueOf(topicMetadataMaxAttempts)));
         varList.add(ContainerUtils.createEnvVar(ENV_VAR_SECURITY_PROTOCOL, EntityTopicOperatorSpec.DEFAULT_SECURITY_PROTOCOL));
         varList.add(ContainerUtils.createEnvVar(ENV_VAR_TLS_ENABLED, Boolean.toString(true)));
         varList.add(ContainerUtils.createEnvVar(ENV_VAR_STRIMZI_GC_LOG_ENABLED, String.valueOf(gcLoggingEnabled)));
-        ModelUtils.javaOptions(varList, jvmOptions);
+        JvmOptionUtils.javaOptions(varList, jvmOptions);
 
         // Add shared environment variables used for all containers
-        varList.addAll(ContainerUtils.requiredEnvVars());
+        varList.addAll(sharedEnvironmentProvider.variables());
 
         ContainerUtils.addContainerEnvsToExistingEnvs(reconciliation, varList, templateContainer);
 
@@ -284,7 +285,7 @@ public class EntityTopicOperator extends AbstractModel implements SupportsLoggin
                         namespace,
                         labels,
                         ownerReference,
-                        MetricsAndLoggingUtils.generateMetricsAndLogConfigMapData(reconciliation, this, metricsAndLogging)
+                        ConfigMapUtils.generateMetricsAndLogConfigMapData(reconciliation, this, metricsAndLogging)
                 );
     }
 

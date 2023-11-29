@@ -10,14 +10,14 @@ import io.strimzi.api.kafka.model.listener.arraylistener.GenericKafkaListener;
 import io.strimzi.api.kafka.model.listener.arraylistener.GenericKafkaListenerBuilder;
 import io.strimzi.api.kafka.model.listener.arraylistener.KafkaListenerType;
 import io.strimzi.systemtest.AbstractST;
-import io.strimzi.systemtest.Constants;
+import io.strimzi.systemtest.TestConstants;
 import io.strimzi.systemtest.Environment;
-import io.strimzi.systemtest.annotations.ParallelSuite;
 import io.strimzi.systemtest.kafkaclients.externalClients.ExternalKafkaClient;
 import io.strimzi.systemtest.annotations.IsolatedTest;
 import io.strimzi.systemtest.annotations.OpenShiftOnly;
 import io.strimzi.systemtest.kafkaclients.internalClients.KafkaClients;
 import io.strimzi.systemtest.kafkaclients.internalClients.KafkaClientsBuilder;
+import io.strimzi.systemtest.storage.TestStorage;
 import io.strimzi.systemtest.templates.crd.KafkaTemplates;
 import io.strimzi.systemtest.templates.crd.KafkaTopicTemplates;
 import io.strimzi.systemtest.templates.crd.KafkaUserTemplates;
@@ -37,22 +37,20 @@ import java.util.Map;
 import java.util.Random;
 import java.util.concurrent.ThreadLocalRandom;
 
-import static io.strimzi.systemtest.Constants.ACCEPTANCE;
-import static io.strimzi.systemtest.Constants.EXTERNAL_CLIENTS_USED;
-import static io.strimzi.systemtest.Constants.INTERNAL_CLIENTS_USED;
-import static io.strimzi.systemtest.Constants.LOADBALANCER_SUPPORTED;
-import static io.strimzi.systemtest.Constants.NODEPORT_SUPPORTED;
-import static io.strimzi.systemtest.Constants.REGRESSION;
+import static io.strimzi.systemtest.TestConstants.ACCEPTANCE;
+import static io.strimzi.systemtest.TestConstants.EXTERNAL_CLIENTS_USED;
+import static io.strimzi.systemtest.TestConstants.INTERNAL_CLIENTS_USED;
+import static io.strimzi.systemtest.TestConstants.LOADBALANCER_SUPPORTED;
+import static io.strimzi.systemtest.TestConstants.NODEPORT_SUPPORTED;
+import static io.strimzi.systemtest.TestConstants.REGRESSION;
 import static org.junit.jupiter.api.Assumptions.assumeFalse;
 
 @Tag(REGRESSION)
-@ParallelSuite
 public class MultipleListenersST extends AbstractST {
 
     private static final Logger LOGGER = LogManager.getLogger(MultipleListenersST.class);
     private Object lock = new Object();
 
-    private final String namespace = testSuiteNamespaceManager.getMapOfAdditionalNamespaces().get(MultipleListenersST.class.getSimpleName()).stream().findFirst().get();
     // only 4 type of listeners
     private Map<KafkaListenerType, List<GenericKafkaListener>> testCases = new HashMap<>(4);
 
@@ -60,7 +58,8 @@ public class MultipleListenersST extends AbstractST {
     @Tag(EXTERNAL_CLIENTS_USED)
     @IsolatedTest("Using more tha one Kafka cluster in one namespace")
     void testMultipleNodePorts(ExtensionContext extensionContext) throws Exception {
-        String clusterName = mapWithClusterNames.get(extensionContext.getDisplayName());
+        final TestStorage testStorage = storageMap.get(extensionContext);
+        String clusterName = testStorage.getClusterName();
 
         runListenersTest(extensionContext, testCases.get(KafkaListenerType.NODEPORT), clusterName);
     }
@@ -68,7 +67,8 @@ public class MultipleListenersST extends AbstractST {
     @Tag(INTERNAL_CLIENTS_USED)
     @IsolatedTest("Using more tha one Kafka cluster in one namespace")
     void testMultipleInternal(ExtensionContext extensionContext) throws Exception {
-        String clusterName = mapWithClusterNames.get(extensionContext.getDisplayName());
+        final TestStorage testStorage = storageMap.get(extensionContext);
+        String clusterName = testStorage.getClusterName();
 
         runListenersTest(extensionContext, testCases.get(KafkaListenerType.INTERNAL), clusterName);
     }
@@ -81,8 +81,8 @@ public class MultipleListenersST extends AbstractST {
     void testCombinationOfInternalAndExternalListeners(ExtensionContext extensionContext) throws Exception {
         // Nodeport needs cluster wide rights to work properly which is not possible with STRIMZI_RBAC_SCOPE=NAMESPACE
         assumeFalse(Environment.isNamespaceRbacScope());
-
-        String clusterName = mapWithClusterNames.get(extensionContext.getDisplayName());
+        final TestStorage testStorage = storageMap.get(extensionContext);
+        String clusterName = testStorage.getClusterName();
 
         List<GenericKafkaListener> multipleDifferentListeners = new ArrayList<>();
 
@@ -100,7 +100,8 @@ public class MultipleListenersST extends AbstractST {
     @Tag(EXTERNAL_CLIENTS_USED)
     @IsolatedTest("Using more tha one Kafka cluster in one namespace")
     void testMultipleLoadBalancers(ExtensionContext extensionContext) throws Exception {
-        String clusterName = mapWithClusterNames.get(extensionContext.getDisplayName());
+        final TestStorage testStorage = storageMap.get(extensionContext);
+        String clusterName = testStorage.getClusterName();
 
         runListenersTest(extensionContext, testCases.get(KafkaListenerType.LOADBALANCER), clusterName);
     }
@@ -109,7 +110,8 @@ public class MultipleListenersST extends AbstractST {
     @Tag(EXTERNAL_CLIENTS_USED)
     @IsolatedTest("Using more tha one Kafka cluster in one namespace")
     void testMultipleRoutes(ExtensionContext extensionContext) throws Exception {
-        final String clusterName = mapWithClusterNames.get(extensionContext.getDisplayName());
+        final TestStorage testStorage = storageMap.get(extensionContext);
+        final String clusterName = testStorage.getClusterName();
 
         runListenersTest(extensionContext, testCases.get(KafkaListenerType.ROUTE), clusterName);
     }
@@ -120,7 +122,8 @@ public class MultipleListenersST extends AbstractST {
     @Tag(INTERNAL_CLIENTS_USED)
     @IsolatedTest("Using more tha one Kafka cluster in one namespace")
     void testMixtureOfExternalListeners(ExtensionContext extensionContext) throws Exception {
-        final String clusterName = mapWithClusterNames.get(extensionContext.getDisplayName());
+        final TestStorage testStorage = storageMap.get(extensionContext);
+        final String clusterName = testStorage.getClusterName();
 
         List<GenericKafkaListener> multipleDifferentListeners = new ArrayList<>();
 
@@ -141,7 +144,8 @@ public class MultipleListenersST extends AbstractST {
     @Tag(INTERNAL_CLIENTS_USED)
     @IsolatedTest("Using more tha one Kafka cluster in one namespace")
     void testCombinationOfEveryKindOfListener(ExtensionContext extensionContext) throws Exception {
-        final String clusterName = mapWithClusterNames.get(extensionContext.getDisplayName());
+        final TestStorage testStorage = storageMap.get(extensionContext);
+        final String clusterName = testStorage.getClusterName();
 
         List<GenericKafkaListener> multipleDifferentListeners = new ArrayList<>();
 
@@ -160,12 +164,12 @@ public class MultipleListenersST extends AbstractST {
     }
 
     private void runListenersTest(ExtensionContext extensionContext, List<GenericKafkaListener> listeners, String clusterName) {
-        LOGGER.info("This is listeners {}, which will verified.", listeners);
+        LOGGER.info("These are listeners to be verified: {}", listeners);
 
         // exercise phase
-        resourceManager.createResource(extensionContext, KafkaTemplates.kafkaEphemeral(clusterName, 3)
+        resourceManager.createResourceWithWait(extensionContext, KafkaTemplates.kafkaEphemeral(clusterName, 3)
             .editMetadata()
-                .withNamespace(namespace)
+                .withNamespace(Environment.TEST_SUITE_NAMESPACE)
             .endMetadata()
             .editSpec()
                 .editKafka()
@@ -177,16 +181,16 @@ public class MultipleListenersST extends AbstractST {
         // only on thread can access to verification phase (here is a lot of variables which can be modified in run-time (data-race))
         synchronized (lock) {
             String kafkaUsername = KafkaUserUtils.generateRandomNameOfKafkaUser();
-            KafkaUser kafkaUserInstance = KafkaUserTemplates.tlsUser(namespace, clusterName, kafkaUsername).build();
+            KafkaUser kafkaUserInstance = KafkaUserTemplates.tlsUser(Environment.TEST_SUITE_NAMESPACE, clusterName, kafkaUsername).build();
 
-            resourceManager.createResource(extensionContext, kafkaUserInstance);
+            resourceManager.createResourceWithWait(extensionContext, kafkaUserInstance);
 
             for (GenericKafkaListener listener : listeners) {
                 final String producerName = "producer-" + new Random().nextInt(Integer.MAX_VALUE);
                 final String consumerName = "consumer-" + new Random().nextInt(Integer.MAX_VALUE);
 
                 String topicName = KafkaTopicUtils.generateRandomNameOfTopic();
-                resourceManager.createResource(extensionContext, KafkaTopicTemplates.topic(clusterName, topicName, namespace).build());
+                resourceManager.createResourceWithWait(extensionContext, KafkaTopicTemplates.topic(clusterName, topicName, Environment.TEST_SUITE_NAMESPACE).build());
 
                 boolean isTlsEnabled = listener.isTls();
 
@@ -194,7 +198,7 @@ public class MultipleListenersST extends AbstractST {
                     if (isTlsEnabled) {
                         ExternalKafkaClient externalTlsKafkaClient = new ExternalKafkaClient.Builder()
                             .withTopicName(topicName)
-                            .withNamespaceName(namespace)
+                            .withNamespaceName(Environment.TEST_SUITE_NAMESPACE)
                             .withClusterName(clusterName)
                             .withMessageCount(MESSAGE_COUNT)
                             .withKafkaUsername(kafkaUsername)
@@ -203,7 +207,7 @@ public class MultipleListenersST extends AbstractST {
                             .withListenerName(listener.getName())
                             .build();
 
-                        LOGGER.info("Verifying {} listener", Constants.TLS_LISTENER_DEFAULT_NAME);
+                        LOGGER.info("Verifying {} listener", TestConstants.TLS_LISTENER_DEFAULT_NAME);
 
                         // verify phase
                         externalTlsKafkaClient.verifyProducedAndConsumedMessages(
@@ -213,14 +217,14 @@ public class MultipleListenersST extends AbstractST {
                     } else {
                         ExternalKafkaClient externalPlainKafkaClient = new ExternalKafkaClient.Builder()
                             .withTopicName(topicName)
-                            .withNamespaceName(namespace)
+                            .withNamespaceName(Environment.TEST_SUITE_NAMESPACE)
                             .withClusterName(clusterName)
                             .withMessageCount(MESSAGE_COUNT)
                             .withSecurityProtocol(SecurityProtocol.PLAINTEXT)
                             .withListenerName(listener.getName())
                             .build();
 
-                        LOGGER.info("Verifying {} listener", Constants.PLAIN_LISTENER_DEFAULT_NAME);
+                        LOGGER.info("Verifying {} listener", TestConstants.PLAIN_LISTENER_DEFAULT_NAME);
 
                         // verify phase
                         externalPlainKafkaClient.verifyProducedAndConsumedMessages(
@@ -235,24 +239,24 @@ public class MultipleListenersST extends AbstractST {
                         .withMessageCount(MESSAGE_COUNT)
                         .withProducerName(producerName)
                         .withConsumerName(consumerName)
-                        .withUserName(kafkaUsername)
-                        .withNamespaceName(namespace)
+                        .withUsername(kafkaUsername)
+                        .withNamespaceName(Environment.TEST_SUITE_NAMESPACE)
                         .withBootstrapAddress(KafkaResources.bootstrapServiceName(clusterName) + ":" + listener.getPort())
                         .build();
 
                     if (isTlsEnabled) {
                         // verify phase
-                        resourceManager.createResource(extensionContext,
+                        resourceManager.createResourceWithWait(extensionContext,
                             kafkaClients.producerTlsStrimzi(clusterName),
                             kafkaClients.consumerTlsStrimzi(clusterName)
                         );
                     } else {
-                        resourceManager.createResource(extensionContext,
+                        resourceManager.createResourceWithWait(extensionContext,
                             kafkaClients.producerStrimzi(),
                             kafkaClients.consumerStrimzi()
                         );
                     }
-                    ClientUtils.waitForClientsSuccess(producerName, consumerName, namespace, MESSAGE_COUNT);
+                    ClientUtils.waitForClientsSuccess(producerName, consumerName, Environment.TEST_SUITE_NAMESPACE, MESSAGE_COUNT);
                 }
             }
         }
@@ -349,5 +353,10 @@ public class MultipleListenersST extends AbstractST {
         super.beforeAllMayOverride(extensionContext);
         // secondly generate test cases
         generateTestCases();
+
+        this.clusterOperator = this.clusterOperator
+            .defaultInstallation(extensionContext)
+            .createInstallation()
+            .runInstallation();
     }
 }

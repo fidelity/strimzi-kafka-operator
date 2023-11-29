@@ -53,13 +53,13 @@ public class FeatureGatesTest {
     @ParallelTest
     public void testFeatureGatesParsing() {
         assertThat(new FeatureGates("+UseKRaft").useKRaftEnabled(), is(true));
-        assertThat(new FeatureGates("+StableConnectIdentities").stableConnectIdentitiesEnabled(), is(true));
-        assertThat(new FeatureGates("-UseKRaft,-StableConnectIdentities").useKRaftEnabled(), is(false));
-        assertThat(new FeatureGates("-UseKRaft,-StableConnectIdentities").stableConnectIdentitiesEnabled(), is(false));
-        assertThat(new FeatureGates("  +UseKRaft    ,    +StableConnectIdentities").useKRaftEnabled(), is(true));
-        assertThat(new FeatureGates("  +UseKRaft    ,    +StableConnectIdentities").stableConnectIdentitiesEnabled(), is(true));
-        assertThat(new FeatureGates("+StableConnectIdentities,-UseKRaft").useKRaftEnabled(), is(false));
-        assertThat(new FeatureGates("+StableConnectIdentities,-UseKRaft").stableConnectIdentitiesEnabled(), is(true));
+        assertThat(new FeatureGates("+KafkaNodePools").kafkaNodePoolsEnabled(), is(true));
+        assertThat(new FeatureGates("-UseKRaft,-KafkaNodePools").useKRaftEnabled(), is(false));
+        assertThat(new FeatureGates("-UseKRaft,-KafkaNodePools").kafkaNodePoolsEnabled(), is(false));
+        assertThat(new FeatureGates("  +UseKRaft    ,    +KafkaNodePools").useKRaftEnabled(), is(true));
+        assertThat(new FeatureGates("  -UseKRaft    ,    -KafkaNodePools").kafkaNodePoolsEnabled(), is(false));
+        assertThat(new FeatureGates("+KafkaNodePools,-UseKRaft").useKRaftEnabled(), is(false));
+        assertThat(new FeatureGates("+KafkaNodePools,-UseKRaft").kafkaNodePoolsEnabled(), is(true));
     }
 
     @ParallelTest
@@ -100,5 +100,17 @@ public class FeatureGatesTest {
     public void testNonExistingGate() {
         InvalidConfigurationException e = assertThrows(InvalidConfigurationException.class, () -> new FeatureGates("+RandomGate"));
         assertThat(e.getMessage(), containsString("Unknown feature gate RandomGate found in the configuration"));
+    }
+
+    @ParallelTest
+    public void testKraftAndKafkaNOdePoolsNotFulfilled() {
+        InvalidConfigurationException e = assertThrows(InvalidConfigurationException.class, () -> new FeatureGates("+UseKRaft,-KafkaNodePools"));
+        assertThat(e.getMessage(), containsString("The UseKRaft feature gate can be enabled only together with the KafkaNodePools feature gate."));
+    }
+
+    @ParallelTest
+    public void testKraftAndKafkaNodePoolsFulfilled() {
+        assertThat(new FeatureGates("+UseKRaft,+KafkaNodePools").useKRaftEnabled(), is(true));
+        assertThat(new FeatureGates("+UseKRaft").useKRaftEnabled(), is(true));
     }
 }

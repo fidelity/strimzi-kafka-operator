@@ -30,6 +30,8 @@ import static org.junit.jupiter.api.Assertions.assertThrows;
 
 @ParallelSuite
 public class KafkaConnectDockerfileTest {
+    private static final SharedEnvironmentProvider SHARED_ENV_PROVIDER = new MockSharedEnvironmentProvider();
+
     private final Artifact jarArtifactNoChecksum = new JarArtifactBuilder()
             .withUrl("https://mydomain.tld/my.jar")
             .build();
@@ -79,7 +81,7 @@ public class KafkaConnectDockerfileTest {
                 .withPlugins(emptyList())
                 .build();
 
-        KafkaConnectDockerfile df = new KafkaConnectDockerfile("myImage:latest", connectBuild);
+        KafkaConnectDockerfile df = new KafkaConnectDockerfile("myImage:latest", connectBuild, SHARED_ENV_PROVIDER);
 
         assertThat(df.getDockerfile(), isEquivalent("FROM myImage:latest",
                 "USER root:root",
@@ -95,7 +97,7 @@ public class KafkaConnectDockerfileTest {
                         .build())
                 .build();
 
-        KafkaConnectDockerfile df = new KafkaConnectDockerfile("myImage:latest", connectBuild);
+        KafkaConnectDockerfile df = new KafkaConnectDockerfile("myImage:latest", connectBuild, SHARED_ENV_PROVIDER);
 
         assertThat(df.getDockerfile(), isEquivalent("FROM myImage:latest",
                 "USER root:root",
@@ -111,7 +113,7 @@ public class KafkaConnectDockerfileTest {
                         .build())
                 .build();
 
-        KafkaConnectDockerfile df = new KafkaConnectDockerfile("myImage:latest", connectBuild);
+        KafkaConnectDockerfile df = new KafkaConnectDockerfile("myImage:latest", connectBuild, SHARED_ENV_PROVIDER);
 
         assertThat(df.getDockerfile(), isEquivalent("FROM myImage:latest",
                 "USER root:root",
@@ -129,7 +131,7 @@ public class KafkaConnectDockerfileTest {
                         .build())
                 .build();
 
-        KafkaConnectDockerfile df = new KafkaConnectDockerfile("myImage:latest", connectBuild);
+        KafkaConnectDockerfile df = new KafkaConnectDockerfile("myImage:latest", connectBuild, SHARED_ENV_PROVIDER);
 
         assertThat(df.getDockerfile(), isEquivalent("FROM myImage:latest",
                 "USER root:root",
@@ -150,7 +152,7 @@ public class KafkaConnectDockerfileTest {
                         .build())
                 .build();
 
-        KafkaConnectDockerfile df = new KafkaConnectDockerfile("myImage:latest", connectBuild);
+        KafkaConnectDockerfile df = new KafkaConnectDockerfile("myImage:latest", connectBuild, SHARED_ENV_PROVIDER);
 
         assertThat(df.getDockerfile(), isEquivalent("FROM myImage:latest",
                 "USER root:root",
@@ -168,7 +170,7 @@ public class KafkaConnectDockerfileTest {
                         .build())
                 .build();
 
-        KafkaConnectDockerfile df = new KafkaConnectDockerfile("myImage:latest", connectBuild);
+        KafkaConnectDockerfile df = new KafkaConnectDockerfile("myImage:latest", connectBuild, SHARED_ENV_PROVIDER);
 
         assertThat(df.getDockerfile(), isEquivalent("FROM myImage:latest",
                 "USER root:root",
@@ -189,7 +191,7 @@ public class KafkaConnectDockerfileTest {
                         .build())
                 .build();
 
-        KafkaConnectDockerfile df = new KafkaConnectDockerfile("myImage:latest", connectBuild);
+        KafkaConnectDockerfile df = new KafkaConnectDockerfile("myImage:latest", connectBuild, SHARED_ENV_PROVIDER);
 
         assertThat(df.getDockerfile(), isEquivalent("FROM myImage:latest",
                 "USER root:root",
@@ -210,7 +212,7 @@ public class KafkaConnectDockerfileTest {
                         .build())
                 .build();
 
-        KafkaConnectDockerfile df = new KafkaConnectDockerfile("myImage:latest", connectBuild);
+        KafkaConnectDockerfile df = new KafkaConnectDockerfile("myImage:latest", connectBuild, SHARED_ENV_PROVIDER);
 
         assertThat(df.getDockerfile(), isEquivalent("FROM myImage:latest",
                 "USER root:root",
@@ -233,7 +235,7 @@ public class KafkaConnectDockerfileTest {
                         .build())
                 .build();
 
-        KafkaConnectDockerfile df = new KafkaConnectDockerfile("myImage:latest", connectBuild);
+        KafkaConnectDockerfile df = new KafkaConnectDockerfile("myImage:latest", connectBuild, SHARED_ENV_PROVIDER);
 
         assertThat(df.getDockerfile(), isEquivalent("FROM myImage:latest",
                 "USER root:root",
@@ -253,7 +255,7 @@ public class KafkaConnectDockerfileTest {
                         .build())
                 .build();
 
-        KafkaConnectDockerfile df = new KafkaConnectDockerfile("myImage:latest", connectBuild);
+        KafkaConnectDockerfile df = new KafkaConnectDockerfile("myImage:latest", connectBuild, SHARED_ENV_PROVIDER);
 
         assertThat(df.getDockerfile(), isEquivalent("FROM myImage:latest",
                 "USER root:root",
@@ -274,7 +276,7 @@ public class KafkaConnectDockerfileTest {
                         .build())
                 .build();
 
-        KafkaConnectDockerfile df = new KafkaConnectDockerfile("myImage:latest", connectBuild);
+        KafkaConnectDockerfile df = new KafkaConnectDockerfile("myImage:latest", connectBuild, SHARED_ENV_PROVIDER);
 
         assertThat(df.getDockerfile(), isEquivalent("FROM myImage:latest",
                 "USER root:root",
@@ -298,7 +300,7 @@ public class KafkaConnectDockerfileTest {
                         .build())
                 .build();
 
-        KafkaConnectDockerfile df = new KafkaConnectDockerfile("myImage:latest", connectBuild);
+        KafkaConnectDockerfile df = new KafkaConnectDockerfile("myImage:latest", connectBuild, SHARED_ENV_PROVIDER);
 
         assertThat(df.getDockerfile(), isEquivalent("FROM myImage:latest",
                 "USER root:root",
@@ -321,7 +323,7 @@ public class KafkaConnectDockerfileTest {
                         .build())
                 .build();
 
-        KafkaConnectDockerfile df = new KafkaConnectDockerfile("myImage:latest", connectBuild);
+        KafkaConnectDockerfile df = new KafkaConnectDockerfile("myImage:latest", connectBuild, SHARED_ENV_PROVIDER);
 
         assertThat(df.getDockerfile(), isEquivalent("FROM myImage:latest",
                 "USER root:root",
@@ -348,7 +350,7 @@ public class KafkaConnectDockerfileTest {
                         .build())
                 .build();
 
-        KafkaConnectDockerfile df = new KafkaConnectDockerfile("myImage:latest", connectBuild);
+        KafkaConnectDockerfile df = new KafkaConnectDockerfile("myImage:latest", connectBuild, SHARED_ENV_PROVIDER);
 
         assertThat(df.getDockerfile(), isEquivalent("FROM myImage:latest",
                 "USER root:root",
@@ -377,7 +379,7 @@ public class KafkaConnectDockerfileTest {
                         .build())
                 .build();
 
-        KafkaConnectDockerfile df = new KafkaConnectDockerfile("myImage:latest", connectBuild);
+        KafkaConnectDockerfile df = new KafkaConnectDockerfile("myImage:latest", connectBuild, SHARED_ENV_PROVIDER);
 
         assertThat(df.getDockerfile(), is("##############################\n" +
                 "##############################\n" +
@@ -423,7 +425,7 @@ public class KafkaConnectDockerfileTest {
                         .build())
                 .build();
 
-        Throwable e = assertThrows(InvalidConfigurationException.class, () -> new KafkaConnectDockerfile("myImage:latest", connectBuildTgz));
+        Throwable e = assertThrows(InvalidConfigurationException.class, () -> new KafkaConnectDockerfile("myImage:latest", connectBuildTgz, SHARED_ENV_PROVIDER));
         assertThat(e.getMessage(), is("`tgz` artifact is missing a URL."));
 
         Build connectBuildZip = new BuildBuilder()
@@ -433,7 +435,7 @@ public class KafkaConnectDockerfileTest {
                         .build())
                 .build();
 
-        e = assertThrows(InvalidConfigurationException.class, () -> new KafkaConnectDockerfile("myImage:latest", connectBuildZip));
+        e = assertThrows(InvalidConfigurationException.class, () -> new KafkaConnectDockerfile("myImage:latest", connectBuildZip, SHARED_ENV_PROVIDER));
         assertThat(e.getMessage(), is("`zip` artifact is missing a URL."));
 
         Build connectBuildJar = new BuildBuilder()
@@ -443,7 +445,7 @@ public class KafkaConnectDockerfileTest {
                         .build())
                 .build();
 
-        e = assertThrows(InvalidConfigurationException.class, () -> new KafkaConnectDockerfile("myImage:latest", connectBuildJar));
+        e = assertThrows(InvalidConfigurationException.class, () -> new KafkaConnectDockerfile("myImage:latest", connectBuildJar, SHARED_ENV_PROVIDER));
         assertThat(e.getMessage(), is("`jar` artifact is missing a URL."));
 
         Build connectBuildOther = new BuildBuilder()
@@ -453,7 +455,7 @@ public class KafkaConnectDockerfileTest {
                         .build())
                 .build();
 
-        e = assertThrows(InvalidConfigurationException.class, () -> new KafkaConnectDockerfile("myImage:latest", connectBuildOther));
+        e = assertThrows(InvalidConfigurationException.class, () -> new KafkaConnectDockerfile("myImage:latest", connectBuildOther, SHARED_ENV_PROVIDER));
         assertThat(e.getMessage(), is("`other` artifact is missing a URL."));
     }
 
@@ -474,7 +476,7 @@ public class KafkaConnectDockerfileTest {
                         .build())
                 .build();
 
-        KafkaConnectDockerfile df = new KafkaConnectDockerfile("myImage:latest", connectBuild);
+        KafkaConnectDockerfile df = new KafkaConnectDockerfile("myImage:latest", connectBuild, SHARED_ENV_PROVIDER);
 
         assertThat(df.getDockerfile(), isEquivalent("FROM myImage:latest",
                 "USER root:root",
@@ -521,7 +523,7 @@ public class KafkaConnectDockerfileTest {
                         .build())
                 .build();
 
-        KafkaConnectDockerfile df = new KafkaConnectDockerfile("myImage:latest", connectBuild);
+        KafkaConnectDockerfile df = new KafkaConnectDockerfile("myImage:latest", connectBuild, SHARED_ENV_PROVIDER);
 
         assertThat(df.getDockerfile(), is("##############################\n" +
                 "##############################\n" +
@@ -582,7 +584,7 @@ public class KafkaConnectDockerfileTest {
                         .build())
                 .build();
 
-        KafkaConnectDockerfile df = new KafkaConnectDockerfile("myImage:latest", connectBuild);
+        KafkaConnectDockerfile df = new KafkaConnectDockerfile("myImage:latest", connectBuild, SHARED_ENV_PROVIDER);
 
         assertThat(df.getDockerfile(), is("##############################\n" +
                 "##############################\n" +
@@ -596,6 +598,52 @@ public class KafkaConnectDockerfileTest {
                 "      && 'echo' '<settings xmlns=\"http://maven.apache.org/SETTINGS/1.0.0\"><profiles><profile><id>download</id><repositories><repository><id>custom-repo</id><url>https://my-maven-repository.com/maven2/</url></repository></repositories></profile></profiles><activeProfiles><activeProfile>download</activeProfile></activeProfiles></settings>' > '/tmp/64cebd9c.xml' \\\n" +
                 "      && 'mvn' 'dependency:copy-dependencies' '-s' '/tmp/64cebd9c.xml' '-DoutputDirectory=/tmp/artifacts/my-connector-plugin/64cebd9c' '-f' '/tmp/my-connector-plugin/64cebd9c/pom.xml' \\\n" +
                 "      && 'curl' '-f' '-L' '--create-dirs' '--output' '/tmp/artifacts/my-connector-plugin/64cebd9c/a1-v1.jar' 'https://my-maven-repository.com/maven2/g1/a1/v1/a1-v1.jar'\n" +
+                "\n" +
+                "FROM myImage:latest\n" +
+                "\n" +
+                "USER root:root\n" +
+                "\n" +
+                "##########\n" +
+                "# Connector plugin my-connector-plugin\n" +
+                "##########\n" +
+                "COPY --from=downloadArtifacts '/tmp/artifacts/my-connector-plugin/64cebd9c' '/opt/kafka/plugins/my-connector-plugin/64cebd9c'\n" +
+                "\n" +
+                "USER 1001\n" +
+                "\n"));
+    }
+
+    @ParallelTest
+    public void testInsecureMavenArtifact()   {
+        MavenArtifact mvn = new MavenArtifactBuilder()
+                .withRepository("https://my-maven-repository.com/maven2")
+                .withGroup("g1")
+                .withArtifact("a1")
+                .withVersion("v1")
+                .withInsecure(true)
+                .build();
+
+        Build connectBuild = new BuildBuilder()
+                .withPlugins(
+                    new PluginBuilder()
+                        .withName("my-connector-plugin")
+                        .withArtifacts(mvn)
+                        .build())
+                .build();
+
+        KafkaConnectDockerfile df = new KafkaConnectDockerfile("myImage:latest", connectBuild, SHARED_ENV_PROVIDER);
+
+        assertThat(df.getDockerfile(), is("##############################\n" +
+                "##############################\n" +
+                "# This file is automatically generated by the Strimzi Cluster Operator\n" +
+                "# Any changes to this file will be ignored and overwritten!\n" +
+                "##############################\n" +
+                "##############################\n" +
+                "\n" +
+                "FROM quay.io/strimzi/maven-builder:latest AS downloadArtifacts\n" +
+                "RUN 'curl' '-f' '-k' '-L' '--create-dirs' '--output' '/tmp/my-connector-plugin/64cebd9c/pom.xml' 'https://my-maven-repository.com/maven2/g1/a1/v1/a1-v1.pom' \\\n" +
+                "      && 'echo' '<settings xmlns=\"http://maven.apache.org/SETTINGS/1.0.0\"><profiles><profile><id>download</id><repositories><repository><id>custom-repo</id><url>https://my-maven-repository.com/maven2/</url></repository></repositories></profile></profiles><activeProfiles><activeProfile>download</activeProfile></activeProfiles></settings>' > '/tmp/64cebd9c.xml' \\\n" +
+                "      && 'mvn' 'dependency:copy-dependencies' '-s' '/tmp/64cebd9c.xml' '-DoutputDirectory=/tmp/artifacts/my-connector-plugin/64cebd9c' '-Daether.connector.https.securityMode=insecure' '-Dmaven.wagon.http.ssl.insecure=true' '-Dmaven.wagon.http.ssl.allowall=true' '-Dmaven.wagon.http.ssl.ignore.validity.dates=true' '-f' '/tmp/my-connector-plugin/64cebd9c/pom.xml' \\\n" +
+                "      && 'curl' '-f' '-k' '-L' '--create-dirs' '--output' '/tmp/artifacts/my-connector-plugin/64cebd9c/a1-v1.jar' 'https://my-maven-repository.com/maven2/g1/a1/v1/a1-v1.jar'\n" +
                 "\n" +
                 "FROM myImage:latest\n" +
                 "\n" +
@@ -627,7 +675,7 @@ public class KafkaConnectDockerfileTest {
                                 .build())
                 .build();
 
-        KafkaConnectDockerfile df = new KafkaConnectDockerfile("myImage:latest", connectBuild);
+        KafkaConnectDockerfile df = new KafkaConnectDockerfile("myImage:latest", connectBuild, SHARED_ENV_PROVIDER);
 
         assertThat(df.getDockerfile(), is("##############################\n" +
                 "##############################\n" +
@@ -653,23 +701,5 @@ public class KafkaConnectDockerfileTest {
                 "\n" +
                 "USER 1001\n" +
                 "\n"));
-    }
-
-    private static Build connectBuildFromGavAndUrl(String g, String a, String v, String url) {
-        MavenArtifact mvn = new MavenArtifactBuilder()
-                .withGroup(g)
-                .withArtifact(a)
-                .withVersion(v)
-                .build();
-        if (url != null) {
-            mvn.setRepository(url);
-        }
-
-        return new BuildBuilder()
-                .withPlugins(new PluginBuilder()
-                        .withName("my-connector-plugin")
-                        .withArtifacts(mvn)
-                        .build())
-                .build();
     }
 }

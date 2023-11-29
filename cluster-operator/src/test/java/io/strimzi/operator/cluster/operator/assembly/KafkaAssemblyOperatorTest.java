@@ -6,6 +6,7 @@ package io.strimzi.operator.cluster.operator.assembly;
 
 import io.fabric8.kubernetes.api.model.ConfigMap;
 import io.fabric8.kubernetes.api.model.ConfigMapBuilder;
+import io.fabric8.kubernetes.api.model.LabelSelector;
 import io.fabric8.kubernetes.api.model.PersistentVolumeClaim;
 import io.fabric8.kubernetes.api.model.PersistentVolumeClaimBuilder;
 import io.fabric8.kubernetes.api.model.Pod;
@@ -45,8 +46,8 @@ import io.strimzi.api.kafka.model.storage.PersistentClaimStorage;
 import io.strimzi.api.kafka.model.storage.PersistentClaimStorageBuilder;
 import io.strimzi.api.kafka.model.storage.SingleVolumeStorage;
 import io.strimzi.api.kafka.model.storage.Storage;
-import io.strimzi.operator.PlatformFeaturesAvailability;
-import io.strimzi.operator.cluster.ClusterOperator;
+import io.strimzi.operator.cluster.model.MockSharedEnvironmentProvider;
+import io.strimzi.operator.cluster.PlatformFeaturesAvailability;
 import io.strimzi.operator.cluster.ClusterOperatorConfig;
 import io.strimzi.operator.cluster.KafkaVersionTestUtils;
 import io.strimzi.operator.cluster.ResourceUtils;
@@ -54,18 +55,22 @@ import io.strimzi.operator.cluster.model.CruiseControl;
 import io.strimzi.operator.cluster.model.EntityOperator;
 import io.strimzi.operator.cluster.model.KafkaCluster;
 import io.strimzi.operator.cluster.model.KafkaExporter;
+import io.strimzi.operator.cluster.model.KafkaPool;
 import io.strimzi.operator.cluster.model.KafkaVersion;
 import io.strimzi.operator.cluster.model.ListenersUtils;
+import io.strimzi.operator.cluster.model.NodeRef;
 import io.strimzi.operator.cluster.model.PodSetUtils;
 import io.strimzi.operator.cluster.model.VolumeUtils;
 import io.strimzi.operator.cluster.model.ZookeeperCluster;
 import io.strimzi.operator.cluster.model.logging.LoggingModel;
 import io.strimzi.operator.cluster.model.metrics.MetricsModel;
+import io.strimzi.operator.cluster.model.nodepools.NodePoolUtils;
 import io.strimzi.operator.cluster.operator.resource.ResourceOperatorSupplier;
 import io.strimzi.operator.cluster.operator.resource.StatefulSetOperator;
 import io.strimzi.operator.common.Annotations;
-import io.strimzi.operator.common.PasswordGenerator;
+import io.strimzi.operator.common.model.PasswordGenerator;
 import io.strimzi.operator.common.Reconciliation;
+import io.strimzi.operator.cluster.model.SharedEnvironmentProvider;
 import io.strimzi.operator.common.model.Labels;
 import io.strimzi.operator.common.operator.MockCertManager;
 import io.strimzi.operator.common.operator.resource.ConfigMapOperator;
@@ -99,13 +104,11 @@ import org.mockito.ArgumentCaptor;
 import org.mockito.ArgumentMatchers;
 
 import java.util.ArrayList;
-import java.util.Collections;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
-import java.util.Optional;
 import java.util.Set;
 import java.util.TreeSet;
 import java.util.concurrent.TimeUnit;
@@ -127,18 +130,19 @@ import static org.mockito.ArgumentMatchers.anyBoolean;
 import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.ArgumentMatchers.isNull;
 import static org.mockito.Mockito.doAnswer;
 import static org.mockito.Mockito.when;
 
 @ExtendWith(VertxExtension.class)
 @SuppressWarnings({"checkstyle:ClassDataAbstractionCoupling", "checkstyle:ClassFanOutComplexity"})
 public class KafkaAssemblyOperatorTest {
-
     public static final Map<String, Object> METRICS_CONFIG = new HashMap<>();
     public static final InlineLogging LOG_KAFKA_CONFIG = new InlineLogging();
     public static final InlineLogging LOG_ZOOKEEPER_CONFIG = new InlineLogging();
     public static final InlineLogging LOG_CONNECT_CONFIG = new InlineLogging();
     private static final KafkaVersion.Lookup VERSIONS = KafkaVersionTestUtils.getKafkaVersionLookup();
+    private static final SharedEnvironmentProvider SHARED_ENV_PROVIDER = new MockSharedEnvironmentProvider();
     private static WorkerExecutor sharedWorkerExecutor;
 
     static {
@@ -342,34 +346,54 @@ public class KafkaAssemblyOperatorTest {
         createCluster(context, kafka, List.of(kafkaJmxSecret, zookeeperJmxSecret));
     }
 
-    private Map<String, PersistentVolumeClaim> createPvcs(String namespace, Storage storage, int replicas,
+    private Map<String, PersistentVolumeClaim> createKafkaPvcs(String namespace, Map<String, Storage> storageMap, Set<NodeRef> nodes,
+                                                          BiFunction<Integer, Integer, String> pvcNameFunction) {
+
+        Map<String, PersistentVolumeClaim> pvcs = new HashMap<>();
+
+        for (NodeRef node : nodes) {
+            Storage storage = storageMap.get(node.poolName());
+
+            if (storage instanceof PersistentClaimStorage) {
+                Integer storageId = ((PersistentClaimStorage) storage).getId();
+                String pvcName = pvcNameFunction.apply(node.nodeId(), storageId);
+                pvcs.put(pvcName, createPvc(namespace, pvcName));
+            }
+        }
+
+        return pvcs;
+    }
+
+    private Map<String, PersistentVolumeClaim> createZooPvcs(String namespace, Storage storage, Set<NodeRef> nodes,
                                                    BiFunction<Integer, Integer, String> pvcNameFunction) {
 
         Map<String, PersistentVolumeClaim> pvcs = new HashMap<>();
         if (storage instanceof PersistentClaimStorage) {
-
-            for (int i = 0; i < replicas; i++) {
+            for (NodeRef node : nodes) {
                 Integer storageId = ((PersistentClaimStorage) storage).getId();
-                String pvcName = pvcNameFunction.apply(i, storageId);
-                PersistentVolumeClaim pvc =
-                        new PersistentVolumeClaimBuilder()
-                                .withNewMetadata()
-                                .withNamespace(namespace)
-                                .withName(pvcName)
-                                .endMetadata()
-                                .build();
-                pvcs.put(pvcName, pvc);
+                String pvcName = pvcNameFunction.apply(node.nodeId(), storageId);
+                pvcs.put(pvcName, createPvc(namespace, pvcName));
             }
 
         }
         return pvcs;
     }
 
+    private PersistentVolumeClaim createPvc(String namespace, String pvcName) {
+        return new PersistentVolumeClaimBuilder()
+                .withNewMetadata()
+                    .withNamespace(namespace)
+                    .withName(pvcName)
+                .endMetadata()
+                .build();
+    }
+
     @SuppressWarnings({"checkstyle:CyclomaticComplexity", "checkstyle:NPathComplexity", "checkstyle:JavaNCSS", "checkstyle:MethodLength"})
     private void createCluster(VertxTestContext context, Kafka kafka, List<Secret> secrets) {
-        KafkaCluster kafkaCluster = KafkaCluster.fromCrd(Reconciliation.DUMMY_RECONCILIATION, kafka, VERSIONS);
-        ZookeeperCluster zookeeperCluster = ZookeeperCluster.fromCrd(Reconciliation.DUMMY_RECONCILIATION, kafka, VERSIONS);
-        EntityOperator entityOperator = EntityOperator.fromCrd(Reconciliation.DUMMY_RECONCILIATION, kafka, VERSIONS, true);
+        List<KafkaPool> pools = NodePoolUtils.createKafkaPools(Reconciliation.DUMMY_RECONCILIATION, kafka, null, Map.of(), Map.of(), false, SHARED_ENV_PROVIDER);
+        KafkaCluster kafkaCluster = KafkaCluster.fromCrd(Reconciliation.DUMMY_RECONCILIATION, kafka, pools, VERSIONS, false, null, SHARED_ENV_PROVIDER);
+        ZookeeperCluster zookeeperCluster = ZookeeperCluster.fromCrd(Reconciliation.DUMMY_RECONCILIATION, kafka, VERSIONS, SHARED_ENV_PROVIDER);
+        EntityOperator entityOperator = EntityOperator.fromCrd(Reconciliation.DUMMY_RECONCILIATION, kafka, VERSIONS, SHARED_ENV_PROVIDER);
 
         // create CM, Service, headless service, statefulset and so on
         ResourceOperatorSupplier supplier = ResourceUtils.supplierWithMocks(openShift);
@@ -416,6 +440,14 @@ public class KafkaAssemblyOperatorTest {
         });
         when(mockPodSetOps.getAsync(eq(kafkaNamespace), eq(KafkaResources.zookeeperStatefulSetName(kafkaName)))).thenReturn(Future.succeededFuture());
         when(mockPodSetOps.getAsync(eq(kafkaNamespace), eq(KafkaResources.kafkaStatefulSetName(kafkaName)))).thenAnswer(i -> Future.succeededFuture(podSetRef.get()));
+        when(mockPodSetOps.batchReconcile(any(), eq(kafkaNamespace), any(), any())).thenCallRealMethod();
+        when(mockPodSetOps.listAsync(eq(kafkaNamespace), eq(kafkaCluster.getSelectorLabels()))).thenAnswer(i -> {
+            if (podSetRef.get() != null) {
+                return Future.succeededFuture(List.of(podSetRef.get()));
+            } else {
+                return Future.succeededFuture(List.of());
+            }
+        });
 
         // Mock StatefulSets
         when(mockStsOps.getAsync(any(), any())).thenReturn(Future.succeededFuture(null));
@@ -496,10 +528,10 @@ public class KafkaAssemblyOperatorTest {
         // Mock node ops
         when(mockNodeOps.listAsync(any(Labels.class))).thenReturn(Future.succeededFuture(emptyList()));
 
-        Map<String, PersistentVolumeClaim> zkPvcs = createPvcs(kafkaNamespace, zookeeperCluster.getStorage(), zookeeperCluster.getReplicas(),
+        Map<String, PersistentVolumeClaim> zkPvcs = createZooPvcs(kafkaNamespace, zookeeperCluster.getStorage(), zookeeperCluster.nodes(),
             (replica, storageId) -> VolumeUtils.DATA_VOLUME_NAME + "-" + KafkaResources.zookeeperPodName(kafkaName, replica));
 
-        Map<String, PersistentVolumeClaim> kafkaPvcs = createPvcs(kafkaNamespace, kafkaCluster.getStorage(), kafkaCluster.getReplicas(),
+        Map<String, PersistentVolumeClaim> kafkaPvcs = createKafkaPvcs(kafkaNamespace, kafkaCluster.getStorageByPoolName(), kafkaCluster.nodes(),
             (replica, storageId) -> {
                 String name = VolumeUtils.createVolumePrefix(storageId, false);
                 return name + "-" + KafkaResources.kafkaPodName(kafkaName, replica);
@@ -528,7 +560,7 @@ public class KafkaAssemblyOperatorTest {
                 });
 
         when(mockPvcOps.listAsync(eq(kafkaNamespace), ArgumentMatchers.any(Labels.class)))
-                .thenAnswer(invocation -> Future.succeededFuture(Collections.EMPTY_LIST));
+                .thenAnswer(invocation -> Future.succeededFuture(emptyList()));
 
         Set<String> expectedPvcs = new HashSet<>(zkPvcs.keySet());
         expectedPvcs.addAll(kafkaPvcs.keySet());
@@ -542,7 +574,7 @@ public class KafkaAssemblyOperatorTest {
                 KafkaResources.clusterCaKeySecretName(kafkaName),
                 KafkaResources.kafkaSecretName(kafkaName),
                 KafkaResources.zookeeperSecretName(kafkaName),
-                ClusterOperator.secretName(kafkaName));
+                KafkaResources.secretName(kafkaName));
 
         if (metrics)    {
             expectedSecrets.add(KafkaExporterResources.secretName(kafkaName));
@@ -580,17 +612,14 @@ public class KafkaAssemblyOperatorTest {
         );
 
         Map<String, Secret> secretsMap = secrets.stream().collect(Collectors.toMap(s -> s.getMetadata().getName(), s -> s));
-
-        when(mockSecretOps.list(anyString(), any())).thenAnswer(i ->
-                new ArrayList<>(secretsMap.values())
-        );
+        when(mockSecretOps.listAsync(any(), any(Labels.class))).thenReturn(Future.succeededFuture(new ArrayList<>(secretsMap.values())));
         when(mockSecretOps.getAsync(anyString(), any())).thenAnswer(i ->
                 Future.succeededFuture(secretsMap.get(i.<String>getArgument(1)))
         );
         when(mockSecretOps.getAsync(kafkaNamespace, KafkaResources.clusterCaCertificateSecretName(kafkaName))).thenAnswer(i ->
                 Future.succeededFuture(secretsMap.get(i.<String>getArgument(1)))
         );
-        when(mockSecretOps.getAsync(kafkaNamespace, ClusterOperator.secretName(kafkaName))).thenAnswer(i ->
+        when(mockSecretOps.getAsync(kafkaNamespace, KafkaResources.secretName(kafkaName))).thenAnswer(i ->
                 Future.succeededFuture(secretsMap.get(i.<String>getArgument(1)))
         );
 
@@ -631,7 +660,7 @@ public class KafkaAssemblyOperatorTest {
         // Now try to create a KafkaCluster based on this CM
         Checkpoint async = context.checkpoint();
         ops.createOrUpdate(new Reconciliation("test-trigger", Kafka.RESOURCE_KIND, kafkaNamespace, kafkaName), kafka)
-            .onComplete(context.succeeding(v -> context.verify(() -> {
+            .onComplete(context.succeeding(status -> context.verify(() -> {
 
                 // We expect a headless and headful service
                 Set<String> expectedServices = set(
@@ -646,8 +675,8 @@ public class KafkaAssemblyOperatorTest {
                     for (GenericKafkaListener listener : externalListeners) {
                         expectedServices.add(ListenersUtils.backwardsCompatibleBootstrapServiceName(kafkaName, listener));
 
-                        for (int i = 0; i < kafkaCluster.getReplicas(); i++) {
-                            expectedServices.add(ListenersUtils.backwardsCompatiblePerBrokerServiceName(kafkaCluster.getComponentName(), i, listener));
+                        for (NodeRef node : kafkaCluster.nodes()) {
+                            expectedServices.add(ListenersUtils.backwardsCompatiblePerBrokerServiceName(kafkaCluster.getComponentName(), node.nodeId(), listener));
                         }
                     }
                 }
@@ -685,14 +714,16 @@ public class KafkaAssemblyOperatorTest {
                 if (openShift) {
                     Set<String> expectedRoutes = set(KafkaResources.bootstrapServiceName(kafkaName));
 
-                    for (int i = 0; i < kafkaCluster.getReplicas(); i++)    {
-                        expectedRoutes.add(KafkaResources.kafkaStatefulSetName(kafkaName) + "-" + i);
+                    for (NodeRef node : kafkaCluster.nodes()) {
+                        expectedRoutes.add(node.podName());
                     }
 
                     assertThat(captured(routeNameCaptor), is(expectedRoutes));
                 } else {
                     assertThat(routeNameCaptor.getAllValues(), hasSize(0));
                 }
+
+                assertThat(status.getOperatorLastSuccessfulVersion(), is(KafkaAssemblyOperator.OPERATOR_VERSION));
 
                 async.flag();
             })));
@@ -833,13 +864,15 @@ public class KafkaAssemblyOperatorTest {
 
     @SuppressWarnings({"checkstyle:NPathComplexity", "checkstyle:JavaNCSS", "checkstyle:MethodLength"})
     private void updateCluster(VertxTestContext context, Kafka originalAssembly, Kafka updatedAssembly) {
-        KafkaCluster originalKafkaCluster = KafkaCluster.fromCrd(Reconciliation.DUMMY_RECONCILIATION, originalAssembly, VERSIONS);
-        KafkaCluster updatedKafkaCluster = KafkaCluster.fromCrd(Reconciliation.DUMMY_RECONCILIATION, updatedAssembly, VERSIONS);
-        ZookeeperCluster originalZookeeperCluster = ZookeeperCluster.fromCrd(Reconciliation.DUMMY_RECONCILIATION, originalAssembly, VERSIONS);
-        ZookeeperCluster updatedZookeeperCluster = ZookeeperCluster.fromCrd(Reconciliation.DUMMY_RECONCILIATION, updatedAssembly, VERSIONS);
-        EntityOperator originalEntityOperator = EntityOperator.fromCrd(new Reconciliation("test", originalAssembly.getKind(), originalAssembly.getMetadata().getNamespace(), originalAssembly.getMetadata().getName()), originalAssembly, VERSIONS, true);
-        KafkaExporter originalKafkaExporter = KafkaExporter.fromCrd(new Reconciliation("test", originalAssembly.getKind(), originalAssembly.getMetadata().getNamespace(), originalAssembly.getMetadata().getName()), originalAssembly, VERSIONS);
-        CruiseControl originalCruiseControl = CruiseControl.fromCrd(Reconciliation.DUMMY_RECONCILIATION, originalAssembly, VERSIONS, updatedKafkaCluster.getStorage());
+        List<KafkaPool> originalPools = NodePoolUtils.createKafkaPools(Reconciliation.DUMMY_RECONCILIATION, originalAssembly, null, Map.of(), Map.of(), false, SHARED_ENV_PROVIDER);
+        KafkaCluster originalKafkaCluster = KafkaCluster.fromCrd(Reconciliation.DUMMY_RECONCILIATION, originalAssembly, originalPools, VERSIONS, false, null, SHARED_ENV_PROVIDER);
+        List<KafkaPool> updatedPools = NodePoolUtils.createKafkaPools(Reconciliation.DUMMY_RECONCILIATION, updatedAssembly, null, Map.of(), Map.of(), false, SHARED_ENV_PROVIDER);
+        KafkaCluster updatedKafkaCluster = KafkaCluster.fromCrd(Reconciliation.DUMMY_RECONCILIATION, updatedAssembly, updatedPools, VERSIONS, false, null, SHARED_ENV_PROVIDER);
+        ZookeeperCluster originalZookeeperCluster = ZookeeperCluster.fromCrd(Reconciliation.DUMMY_RECONCILIATION, originalAssembly, VERSIONS, SHARED_ENV_PROVIDER);
+        ZookeeperCluster updatedZookeeperCluster = ZookeeperCluster.fromCrd(Reconciliation.DUMMY_RECONCILIATION, updatedAssembly, VERSIONS, SHARED_ENV_PROVIDER);
+        EntityOperator originalEntityOperator = EntityOperator.fromCrd(new Reconciliation("test", originalAssembly.getKind(), originalAssembly.getMetadata().getNamespace(), originalAssembly.getMetadata().getName()), originalAssembly, VERSIONS, SHARED_ENV_PROVIDER);
+        KafkaExporter originalKafkaExporter = KafkaExporter.fromCrd(new Reconciliation("test", originalAssembly.getKind(), originalAssembly.getMetadata().getNamespace(), originalAssembly.getMetadata().getName()), originalAssembly, VERSIONS, SHARED_ENV_PROVIDER);
+        CruiseControl originalCruiseControl = CruiseControl.fromCrd(Reconciliation.DUMMY_RECONCILIATION, originalAssembly, VERSIONS, originalKafkaCluster.nodes(), Map.of(), Map.of(), SHARED_ENV_PROVIDER);
 
         // create CM, Service, headless service, statefulset and so on
         ResourceOperatorSupplier supplier = ResourceUtils.supplierWithMocks(openShift);
@@ -863,18 +896,18 @@ public class KafkaAssemblyOperatorTest {
         String clusterNamespace = updatedAssembly.getMetadata().getNamespace();
 
         Map<String, PersistentVolumeClaim> zkPvcs =
-                createPvcs(clusterNamespace, originalZookeeperCluster.getStorage(), originalZookeeperCluster.getReplicas(),
+                createZooPvcs(clusterNamespace, originalZookeeperCluster.getStorage(), originalZookeeperCluster.nodes(),
                     (replica, storageId) -> VolumeUtils.DATA_VOLUME_NAME + "-" + KafkaResources.zookeeperPodName(clusterName, replica));
-        zkPvcs.putAll(createPvcs(clusterNamespace, updatedZookeeperCluster.getStorage(), updatedZookeeperCluster.getReplicas(),
+        zkPvcs.putAll(createZooPvcs(clusterNamespace, updatedZookeeperCluster.getStorage(), updatedZookeeperCluster.nodes(),
             (replica, storageId) -> VolumeUtils.DATA_VOLUME_NAME + "-" + KafkaResources.zookeeperPodName(clusterName, replica)));
 
         Map<String, PersistentVolumeClaim> kafkaPvcs =
-                createPvcs(clusterNamespace, originalKafkaCluster.getStorage(), originalKafkaCluster.getReplicas(),
+                createKafkaPvcs(clusterNamespace, originalKafkaCluster.getStorageByPoolName(), originalKafkaCluster.nodes(),
                     (replica, storageId) -> {
                         String name = VolumeUtils.createVolumePrefix(storageId, false);
                         return name + "-" + KafkaResources.kafkaPodName(clusterName, replica);
                     });
-        kafkaPvcs.putAll(createPvcs(clusterNamespace, updatedKafkaCluster.getStorage(), updatedKafkaCluster.getReplicas(),
+        kafkaPvcs.putAll(createKafkaPvcs(clusterNamespace, updatedKafkaCluster.getStorageByPoolName(), updatedKafkaCluster.nodes(),
             (replica, storageId) -> {
                 String name = VolumeUtils.createVolumePrefix(storageId, false);
                 return name + "-" + KafkaResources.kafkaPodName(clusterName, replica);
@@ -910,7 +943,7 @@ public class KafkaAssemblyOperatorTest {
                     } else if (labels.toMap().get(Labels.STRIMZI_NAME_LABEL).contains("zookeeper")) {
                         return Future.succeededFuture(new ArrayList<>(zkPvcs.values()));
                     }
-                    return Future.succeededFuture(Collections.EMPTY_LIST);
+                    return Future.succeededFuture(emptyList());
                 });
 
         when(mockPvcOps.reconcile(any(), anyString(), anyString(), any())).thenReturn(Future.succeededFuture());
@@ -1032,12 +1065,11 @@ public class KafkaAssemblyOperatorTest {
             when(mockRouteOps.hasAddress(any(), eq(clusterNamespace), any(), anyLong(), anyLong())).thenReturn(
                     Future.succeededFuture()
             );
+            when(mockRouteOps.reconcile(any(), eq(clusterNamespace), any(), any())).thenReturn(Future.succeededFuture(ReconcileResult.patched(new Route())));
         }
 
         // Mock Secret gets
-        when(mockSecretOps.list(anyString(), any())).thenReturn(
-                emptyList()
-        );
+        when(mockSecretOps.listAsync(any(), any(Labels.class))).thenReturn(Future.succeededFuture(List.of()));
         when(mockSecretOps.getAsync(clusterNamespace, KafkaResources.kafkaJmxSecretName(clusterName))).thenReturn(
                 Future.succeededFuture(originalKafkaCluster.jmx().jmxSecret(null))
         );
@@ -1057,7 +1089,7 @@ public class KafkaAssemblyOperatorTest {
         when(mockSecretOps.getAsync(clusterNamespace, KafkaResources.clusterCaCertificateSecretName(clusterName))).thenReturn(
                 Future.succeededFuture(new Secret())
         );
-        when(mockSecretOps.getAsync(clusterNamespace, ClusterOperator.secretName(clusterName))).thenReturn(
+        when(mockSecretOps.getAsync(clusterNamespace, KafkaResources.secretName(clusterName))).thenReturn(
                 Future.succeededFuture(new Secret())
         );
         when(mockSecretOps.getAsync(clusterNamespace, CruiseControlResources.secretName(clusterName))).thenReturn(
@@ -1083,13 +1115,21 @@ public class KafkaAssemblyOperatorTest {
         when(mockPodSetOps.getAsync(eq(clusterNamespace), eq(KafkaResources.zookeeperStatefulSetName(clusterName)))).thenReturn(Future.succeededFuture(zooPodSetRef.get()));
 
         AtomicReference<StrimziPodSet> kafkaPodSetRef = new AtomicReference<>();
-        kafkaPodSetRef.set(originalKafkaCluster.generatePodSet(originalKafkaCluster.getReplicas(), openShift, null, null, (p) -> Map.of()));
+        kafkaPodSetRef.set(originalKafkaCluster.generatePodSets(openShift, null, null, (p) -> Map.of()).get(0));
         when(mockPodSetOps.reconcile(any(), eq(clusterNamespace), eq(KafkaResources.kafkaStatefulSetName(clusterName)), any())).thenAnswer(invocation -> {
             StrimziPodSet sps = invocation.getArgument(3, StrimziPodSet.class);
             kafkaPodSetRef.set(sps);
             return Future.succeededFuture(ReconcileResult.patched(sps));
         });
         when(mockPodSetOps.getAsync(eq(clusterNamespace), eq(KafkaResources.kafkaStatefulSetName(clusterName)))).thenReturn(Future.succeededFuture(kafkaPodSetRef.get()));
+        when(mockPodSetOps.batchReconcile(any(), eq(clusterNamespace), any(), any())).thenCallRealMethod();
+        when(mockPodSetOps.listAsync(eq(clusterNamespace), eq(updatedKafkaCluster.getSelectorLabels()))).thenAnswer(i -> {
+            if (kafkaPodSetRef.get() != null) {
+                return Future.succeededFuture(List.of(kafkaPodSetRef.get()));
+            } else {
+                return Future.succeededFuture(List.of());
+            }
+        });
 
         // Mock StatefulSet get
         when(mockStsOps.getAsync(eq(clusterNamespace), eq(KafkaResources.zookeeperStatefulSetName(clusterName)))).thenReturn(Future.succeededFuture());
@@ -1156,7 +1196,7 @@ public class KafkaAssemblyOperatorTest {
 
         // Mock Service patch (both service and headless service
         ArgumentCaptor<String> patchedServicesCaptor = ArgumentCaptor.forClass(String.class);
-        when(mockServiceOps.reconcile(any(), eq(clusterNamespace), patchedServicesCaptor.capture(), any())).thenReturn(Future.succeededFuture());
+        when(mockServiceOps.reconcile(any(), eq(clusterNamespace), patchedServicesCaptor.capture(), any())).thenReturn(Future.succeededFuture(ReconcileResult.patched(new Service())));
         // Mock Secrets patch
         when(mockSecretOps.reconcile(any(), eq(clusterNamespace), any(), any())).thenReturn(Future.succeededFuture());
 
@@ -1177,19 +1217,25 @@ public class KafkaAssemblyOperatorTest {
                 config
         );
 
+        // Mock broker scale down operation
+        PreventBrokerScaleDownCheck operations = supplier.brokerScaleDownOperations;
+        when(operations.canScaleDownBrokers(any(), any(), any(), any(), any())).thenReturn(Future.succeededFuture(Set.of()));
+
         // Now try to update a KafkaCluster based on this CM
         Checkpoint async = context.checkpoint();
         ops.createOrUpdate(new Reconciliation("test-trigger", Kafka.RESOURCE_KIND, clusterNamespace, clusterName),
                 updatedAssembly)
-            .onComplete(context.succeeding(v -> context.verify(() -> {
+            .onComplete(context.succeeding(status -> context.verify(() -> {
                 // Check that ZK scale-up happens when it should
                 assertThat(zooPodSetRef.get().getSpec().getPods().size(), is(updatedAssembly.getSpec().getZookeeper().getReplicas()));
+
+                assertThat(status.getOperatorLastSuccessfulVersion(), is(KafkaAssemblyOperator.OPERATOR_VERSION));
+                assertThat(status.getKafkaVersion(), is(VERSIONS.defaultVersion().version()));
 
                 async.flag();
             })));
     }
 
-    @SuppressWarnings("unchecked")
     @ParameterizedTest
     @MethodSource("data")
     @Timeout(value = 2, timeUnit = TimeUnit.MINUTES)
@@ -1209,7 +1255,7 @@ public class KafkaAssemblyOperatorTest {
 
         Kafka foo = getKafkaAssembly("foo");
         Kafka bar = getKafkaAssembly("bar");
-        when(mockKafkaOps.listAsync(eq(kafkaNamespace), any(Optional.class))).thenReturn(
+        when(mockKafkaOps.listAsync(eq(kafkaNamespace), isNull(LabelSelector.class))).thenReturn(
             Future.succeededFuture(asList(foo, bar))
         );
         // when requested Custom Resource for a specific Kafka cluster
@@ -1243,7 +1289,6 @@ public class KafkaAssemblyOperatorTest {
         ops.reconcileAll("test", kafkaNamespace, context.succeeding(v -> completeTest.flag()));
     }
 
-    @SuppressWarnings("unchecked")
     @ParameterizedTest
     @MethodSource("data")
     @Timeout(value = 2, timeUnit = TimeUnit.MINUTES)
@@ -1259,7 +1304,7 @@ public class KafkaAssemblyOperatorTest {
         foo.getMetadata().setNamespace("namespace1");
         Kafka bar = getKafkaAssembly("bar");
         bar.getMetadata().setNamespace("namespace2");
-        when(mockKafkaOps.listAsync(eq("*"), any(Optional.class))).thenReturn(
+        when(mockKafkaOps.listAsync(eq("*"), isNull(LabelSelector.class))).thenReturn(
                 Future.succeededFuture(asList(foo, bar))
         );
         // when requested Custom Resource for a specific Kafka cluster

@@ -30,12 +30,12 @@ import io.strimzi.api.kafka.model.status.KafkaStatus;
 import io.strimzi.api.kafka.model.storage.PersistentClaimStorage;
 import io.strimzi.api.kafka.model.storage.PersistentClaimStorageBuilder;
 import io.strimzi.certs.OpenSslCertManager;
-import io.strimzi.operator.PlatformFeaturesAvailability;
+import io.strimzi.operator.cluster.PlatformFeaturesAvailability;
 import io.strimzi.operator.cluster.ClusterOperatorConfig;
 import io.strimzi.operator.cluster.KafkaVersionTestUtils;
 import io.strimzi.operator.cluster.ResourceUtils;
-import io.strimzi.operator.cluster.model.Ca;
-import io.strimzi.operator.cluster.model.ClientsCa;
+import io.strimzi.operator.common.model.Ca;
+import io.strimzi.operator.common.model.ClientsCa;
 import io.strimzi.operator.cluster.model.ClusterCa;
 import io.strimzi.operator.cluster.model.KafkaVersion;
 import io.strimzi.operator.cluster.model.KafkaVersionChange;
@@ -44,10 +44,10 @@ import io.strimzi.operator.cluster.operator.assembly.CaReconciler;
 import io.strimzi.operator.cluster.operator.assembly.KafkaAssemblyOperator;
 import io.strimzi.operator.cluster.operator.assembly.KafkaReconciler;
 import io.strimzi.operator.cluster.operator.assembly.StrimziPodSetController;
-import io.strimzi.operator.cluster.operator.resource.PodRevision;
+import io.strimzi.operator.cluster.model.PodRevision;
 import io.strimzi.operator.cluster.operator.resource.ResourceOperatorSupplier;
 import io.strimzi.operator.common.AdminClientProvider;
-import io.strimzi.operator.common.PasswordGenerator;
+import io.strimzi.operator.common.model.PasswordGenerator;
 import io.strimzi.operator.common.Reconciliation;
 import io.strimzi.operator.common.model.Labels;
 import io.strimzi.operator.common.operator.MockCertManager;
@@ -121,7 +121,8 @@ public class KubernetesRestartEventsMockTest {
             VERSIONS.defaultVersion(),
             VERSIONS.defaultVersion(),
             VERSIONS.defaultVersion().protocolVersion(),
-            VERSIONS.defaultVersion().messageVersion()
+            VERSIONS.defaultVersion().messageVersion(),
+            VERSIONS.defaultVersion().metadataVersion()
     );
 
     private final MockCertManager mockCertManager = new MockCertManager();
@@ -153,6 +154,7 @@ public class KubernetesRestartEventsMockTest {
                 .withMockWebServerLoggingSettings(Level.WARNING, true)
                 .withKafkaCrd()
                 .withInitialKafkas(KAFKA)
+                .withKafkaNodePoolCrd()
                 .withStrimziPodSetCrd()
                 .withPodController()
                 .withServiceController()
@@ -169,7 +171,7 @@ public class KubernetesRestartEventsMockTest {
                 PFA,
                 60_000);
 
-        podSetController = new StrimziPodSetController(NAMESPACE, Labels.EMPTY, supplier.kafkaOperator, supplier.connectOperator, supplier.mirrorMaker2Operator, supplier.strimziPodSetOperator, supplier.podOperations, supplier.metricsProvider, ClusterOperatorConfig.DEFAULT_POD_SET_CONTROLLER_WORK_QUEUE_SIZE);
+        podSetController = new StrimziPodSetController(NAMESPACE, Labels.EMPTY, supplier.kafkaOperator, supplier.connectOperator, supplier.mirrorMaker2Operator, supplier.strimziPodSetOperator, supplier.podOperations, supplier.metricsProvider, Integer.parseInt(ClusterOperatorConfig.POD_SET_CONTROLLER_WORK_QUEUE_SIZE.defaultValue()));
         podSetController.start();
 
         // Initial reconciliation to create cluster
@@ -202,7 +204,8 @@ public class KubernetesRestartEventsMockTest {
         KafkaReconciler lowerVolumes = new KafkaReconciler(reconciliation,
                 kafkaWithLessVolumes,
                 null,
-                1,
+                Map.of(),
+                Map.of(CLUSTER_NAME + "-kafka", List.of(CLUSTER_NAME + "-kafka-0")),
                 clusterCa,
                 clientsCa,
                 VERSION_CHANGE,
@@ -243,7 +246,8 @@ public class KubernetesRestartEventsMockTest {
         KafkaReconciler reconciler = new KafkaReconciler(reconciliation,
                 KAFKA,
                 null,
-                1,
+                Map.of(),
+                Map.of(CLUSTER_NAME + "-kafka", List.of(CLUSTER_NAME + "-kafka-0")),
                 oldGenClusterCa,
                 clientsCa,
                 VERSION_CHANGE,
@@ -267,7 +271,8 @@ public class KubernetesRestartEventsMockTest {
         KafkaReconciler reconciler = new KafkaReconciler(reconciliation,
                 KAFKA,
                 null,
-                1,
+                Map.of(),
+                Map.of(CLUSTER_NAME + "-kafka", List.of(CLUSTER_NAME + "-kafka-0")),
                 ca,
                 clientsCa,
                 VERSION_CHANGE,
@@ -291,7 +296,8 @@ public class KubernetesRestartEventsMockTest {
         KafkaReconciler reconciler = new KafkaReconciler(reconciliation,
                 KAFKA,
                 null,
-                1,
+                Map.of(),
+                Map.of(CLUSTER_NAME + "-kafka", List.of(CLUSTER_NAME + "-kafka-0")),
                 ca,
                 clientsCa,
                 VERSION_CHANGE,
@@ -341,14 +347,15 @@ public class KubernetesRestartEventsMockTest {
 
     @Test
     void testEventEmittedWhenConfigChangeRequiresRestart(Vertx vertx, VertxTestContext context) {
-        // Modify mccked configs call to return a new property to trigger a reconfiguration reconciliation that requires a restart
+        // Modify mocked configs call to return a new property to trigger a reconfiguration reconciliation that requires a restart
         Admin adminClient = withChangedBrokerConf(ResourceUtils.adminClientProvider().createAdminClient(null, null, null, null));
         ResourceOperatorSupplier supplierWithModifiedAdmin = supplierWithAdmin(vertx, () -> adminClient);
 
         KafkaReconciler reconciler = new KafkaReconciler(reconciliation,
                 KAFKA,
                 null,
-                1,
+                Map.of(),
+                Map.of(CLUSTER_NAME + "-kafka", List.of(CLUSTER_NAME + "-kafka-0")),
                 clusterCa,
                 clientsCa,
                 VERSION_CHANGE,
@@ -400,7 +407,8 @@ public class KubernetesRestartEventsMockTest {
         KafkaReconciler reconciler = new KafkaReconciler(reconciliation,
                 KAFKA,
                 null,
-                1,
+                Map.of(),
+                Map.of(CLUSTER_NAME + "-kafka", List.of(CLUSTER_NAME + "-kafka-0")),
                 clusterCa,
                 clientsCa,
                 VERSION_CHANGE,
@@ -452,7 +460,7 @@ public class KubernetesRestartEventsMockTest {
                 createInitialCaKeySecret(NAMESPACE, CLUSTER_NAME, clusterCaKeySecretName(CLUSTER_NAME), MockCertManager.clusterCaKey())
         );
 
-        KafkaReconciler reconciler = new KafkaReconciler(reconciliation, KAFKA, null, 1, changedCa, clientsCa, VERSION_CHANGE, clusterOperatorConfig, supplier, PFA, vertx);
+        KafkaReconciler reconciler = new KafkaReconciler(reconciliation, KAFKA, null, Map.of(), Map.of(CLUSTER_NAME + "-kafka", List.of(CLUSTER_NAME + "-kafka-0")), changedCa, clientsCa, VERSION_CHANGE, clusterOperatorConfig, supplier, PFA, vertx);
         reconciler.reconcile(ks, Clock.systemUTC()).onComplete(verifyEventPublished(KAFKA_CERTIFICATES_CHANGED, context));
 
     }
@@ -477,7 +485,7 @@ public class KubernetesRestartEventsMockTest {
     }
 
     private KafkaReconciler defaultReconciler(Vertx vertx) {
-        return new KafkaReconciler(reconciliation, KAFKA, null, 1, clusterCa, clientsCa, VERSION_CHANGE, clusterOperatorConfig, supplier, PFA, vertx);
+        return new KafkaReconciler(reconciliation, KAFKA, null, Map.of(), Map.of(CLUSTER_NAME + "-kafka", List.of(CLUSTER_NAME + "-kafka-0")), clusterCa, clientsCa, VERSION_CHANGE, clusterOperatorConfig, supplier, PFA, vertx);
     }
 
     private ResourceOperatorSupplier supplierWithAdmin(Vertx vertx, Supplier<Admin> adminClientSupplier) {

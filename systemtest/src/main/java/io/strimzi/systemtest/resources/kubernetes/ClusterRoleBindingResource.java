@@ -6,7 +6,7 @@ package io.strimzi.systemtest.resources.kubernetes;
 
 import io.fabric8.kubernetes.api.model.rbac.ClusterRoleBinding;
 import io.fabric8.kubernetes.api.model.rbac.ClusterRoleBindingBuilder;
-import io.strimzi.systemtest.Constants;
+import io.strimzi.systemtest.TestConstants;
 import io.strimzi.systemtest.resources.ResourceManager;
 import io.strimzi.systemtest.resources.ResourceType;
 import io.strimzi.test.TestUtils;
@@ -23,7 +23,7 @@ public class ClusterRoleBindingResource implements ResourceType<ClusterRoleBindi
 
     @Override
     public String getKind() {
-        return Constants.CLUSTER_ROLE_BINDING;
+        return TestConstants.CLUSTER_ROLE_BINDING;
     }
     @Override
     public ClusterRoleBinding get(String namespace, String name) {
@@ -32,20 +32,26 @@ public class ClusterRoleBindingResource implements ResourceType<ClusterRoleBindi
     }
     @Override
     public void create(ClusterRoleBinding resource) {
-        kubeClient(KubeClusterResource.getInstance().defaultNamespace()).createOrReplaceClusterRoleBinding(resource);
+        kubeClient(KubeClusterResource.getInstance().defaultNamespace()).createOrUpdateClusterRoleBinding(resource);
     }
     @Override
     public void delete(ClusterRoleBinding resource) {
         // ClusterRoleBinding his operation namespace is only 'default'
         kubeClient(KubeClusterResource.getInstance().defaultNamespace()).deleteClusterRoleBinding(resource);
     }
+
+    @Override
+    public void update(ClusterRoleBinding resource) {
+        kubeClient(KubeClusterResource.getInstance().defaultNamespace()).createOrUpdateClusterRoleBinding(resource);
+    }
+
     @Override
     public boolean waitForReadiness(ClusterRoleBinding resource) {
         return resource != null;
     }
 
     public static ClusterRoleBinding clusterRoleBinding(ExtensionContext extensionContext, String yamlPath, String namespace) {
-        LOGGER.info("Creating ClusterRoleBinding in test case {} from {} in namespace {}",
+        LOGGER.info("Creating ClusterRoleBinding in test case {} from {} in Namespace: {}",
             extensionContext.getDisplayName(), yamlPath, namespace);
         ClusterRoleBinding clusterRoleBinding = getClusterRoleBindingFromYaml(yamlPath);
         clusterRoleBinding = new ClusterRoleBindingBuilder(clusterRoleBinding)
@@ -53,13 +59,13 @@ public class ClusterRoleBindingResource implements ResourceType<ClusterRoleBindi
             .withNamespace(namespace)
             .endSubject().build();
 
-        ResourceManager.getInstance().createResource(extensionContext, clusterRoleBinding);
+        ResourceManager.getInstance().createResourceWithWait(extensionContext, clusterRoleBinding);
 
         return clusterRoleBinding;
     }
 
     public static ClusterRoleBinding clusterRoleBinding(ExtensionContext extensionContext, ClusterRoleBinding clusterRoleBinding) {
-        ResourceManager.getInstance().createResource(extensionContext, clusterRoleBinding);
+        ResourceManager.getInstance().createResourceWithWait(extensionContext, clusterRoleBinding);
         return clusterRoleBinding;
     }
 

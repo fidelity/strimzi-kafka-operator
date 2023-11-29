@@ -24,6 +24,7 @@ import static org.hamcrest.Matchers.empty;
 import static org.hamcrest.collection.IsCollectionWithSize.hasSize;
 
 public class ZooKeeperSpecCheckerTest {
+    private static final SharedEnvironmentProvider SHARED_ENV_PROVIDER = new MockSharedEnvironmentProvider();
     private static final String NAMESPACE = "ns";
     private static final String NAME = "foo";
     private static final String IMAGE = "image";
@@ -32,7 +33,7 @@ public class ZooKeeperSpecCheckerTest {
 
     private ZooKeeperSpecChecker generateChecker(Kafka kafka) {
         KafkaVersion.Lookup versions = KafkaVersionTestUtils.getKafkaVersionLookup();
-        ZookeeperCluster zkCluster = ZookeeperCluster.fromCrd(Reconciliation.DUMMY_RECONCILIATION, kafka, versions);
+        ZookeeperCluster zkCluster = ZookeeperCluster.fromCrd(Reconciliation.DUMMY_RECONCILIATION, kafka, versions, SHARED_ENV_PROVIDER);
         return new ZooKeeperSpecChecker(zkCluster);
     }
 

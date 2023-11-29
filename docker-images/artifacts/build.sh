@@ -12,7 +12,7 @@ function dependency_check {
         exit 1
     fi
 
-    if [ "$BASH_VERSINFO" -lt 4 ]
+    if [ "${BASH_VERSINFO[0]}" -lt 4 ]
     then 
         >&2 echo "You need bash version >= 4 to build Strimzi. Refer to DEV_GUIDE.md for more information"
         exit 1
@@ -136,6 +136,8 @@ function fetch_and_unpack_kafka_binaries {
             ./extract-jars.sh "$dist_dir/libs" "$unzipped_dir"
             ./find-colliding-classes.sh "$unzipped_dir" | awk '{print $1}' | $SORT | $UNIQ > "$ignorelist_file" || true
             rm -rf $unzipped_dir
+            # Add ignored 3rd party libraries
+            cat kafka-thirdparty-libs/${version_libs[$kafka_version]}/ignorelist >> $ignorelist_file
         fi
 
         # We extracted the files, so we just keep the archive and the ignorelist
@@ -151,14 +153,14 @@ function download_kafka_binaries_from_cdn {
     
     local remote_path="${archive_url/https:\/\/archive.apache.org\/dist\//}"
     local cdn_url="https://dlcdn.apache.org/${remote_path}"
-    
+
     echo "Downloading from CDN: ${cdn_url}"
-    local cdn_code=$(curl -Ls -o "${local_path}" -w %{http_code} "${cdn_url}")
+    local cdn_code=$(curl -L ${CURL_ARGS} -o "${local_path}" -w %{http_code} "${cdn_url}")
     echo "CDN HTTP code: ${cdn_code}"
 
     if [[ "${cdn_code}" != "200" ]]; then
         echo "Download from CDN failed. Retrying with archive: ${archive_url}"
-        local archive_code=$(curl -Ls -o "${local_path}" -w %{http_code} "${archive_url}")
+        local archive_code=$(curl -L ${CURL_ARGS} -o "${local_path}" -w %{http_code} "${archive_url}")
         echo "Archive HTTP code: ${archive_code}"
     fi
 }

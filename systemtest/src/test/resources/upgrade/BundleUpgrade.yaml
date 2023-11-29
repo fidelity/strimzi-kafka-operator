@@ -24,15 +24,15 @@
 #  featureGatesAfter: String - FG added to `STRIMZI_FEATURE_GATES` environment variable, on upgrade of CO
 #  --- Structure ---
 
-- fromVersion: 0.34.0
-  fromExamples: strimzi-0.34.0
-  oldestKafka: 3.3.1
-  fromUrl: https://github.com/strimzi/strimzi-kafka-operator/releases/download/0.34.0/strimzi-0.34.0.zip
-  fromKafkaVersionsUrl: https://raw.githubusercontent.com/strimzi/strimzi-kafka-operator/0.34.0/kafka-versions.yaml
+- fromVersion: 0.38.0
+  fromExamples: strimzi-0.38.0
+  oldestKafka: 3.5.0
+  fromUrl: https://github.com/strimzi/strimzi-kafka-operator/releases/download/0.38.0/strimzi-0.38.0.zip
+  fromKafkaVersionsUrl: https://raw.githubusercontent.com/strimzi/strimzi-kafka-operator/0.38.0/kafka-versions.yaml
   additionalTopics: 2
   imagesAfterOperations:
-    zookeeper: strimzi/kafka:latest-kafka-3.4.0
-    kafka: strimzi/kafka:latest-kafka-3.4.0
+    zookeeper: strimzi/kafka:latest-kafka-3.6.0
+    kafka: strimzi/kafka:latest-kafka-3.6.0
     topicOperator: strimzi/operator:latest
     userOperator: strimzi/operator:latest
   client:
@@ -44,15 +44,15 @@
     reason: Test is working on environment, where k8s server version is < 1.22
   featureGatesBefore: ""
   featureGatesAfter: ""
-- fromVersion: 0.34.0
-  fromExamples: strimzi-0.34.0
-  oldestKafka: 3.3.1
-  fromUrl: https://github.com/strimzi/strimzi-kafka-operator/releases/download/0.34.0/strimzi-0.34.0.zip
-  fromKafkaVersionsUrl: https://raw.githubusercontent.com/strimzi/strimzi-kafka-operator/0.34.0/kafka-versions.yaml
+- fromVersion: 0.38.0
+  fromExamples: strimzi-0.38.0
+  oldestKafka: 3.5.0
+  fromUrl: https://github.com/strimzi/strimzi-kafka-operator/releases/download/0.38.0/strimzi-0.38.0.zip
+  fromKafkaVersionsUrl: https://raw.githubusercontent.com/strimzi/strimzi-kafka-operator/0.38.0/kafka-versions.yaml
   additionalTopics: 2
   imagesAfterOperations:
-    zookeeper: strimzi/kafka:latest-kafka-3.4.0
-    kafka: strimzi/kafka:latest-kafka-3.4.0
+    zookeeper: strimzi/kafka:latest-kafka-3.6.0
+    kafka: strimzi/kafka:latest-kafka-3.6.0
     topicOperator: strimzi/operator:latest
     userOperator: strimzi/operator:latest
   client:
@@ -62,5 +62,5 @@
     status: stable
     flakyEnvVariable: none
     reason: Test is working on environment, where k8s server version is < 1.22
-  featureGatesBefore: "-UseStrimziPodSets"
-  featureGatesAfter: "+StableConnectIdentities"
+  featureGatesBefore: "-StableConnectIdentities,-UnidirectionalTopicOperator"
+  featureGatesAfter: ""

@@ -15,7 +15,7 @@ import java.lang.annotation.ElementType;
 import java.lang.annotation.Retention;
 import java.lang.annotation.Target;
 
-import static io.strimzi.systemtest.Constants.PARALLEL_NAMESPACE;
+import static io.strimzi.systemtest.TestConstants.PARALLEL_NAMESPACE;
 import static java.lang.annotation.RetentionPolicy.RUNTIME;
 
 /***
@@ -33,4 +33,6 @@ import static java.lang.annotation.RetentionPolicy.RUNTIME;
 @Test
 @Tag(PARALLEL_NAMESPACE)
 public @interface ParallelNamespaceTest {
+
+    String value() default "";
 }

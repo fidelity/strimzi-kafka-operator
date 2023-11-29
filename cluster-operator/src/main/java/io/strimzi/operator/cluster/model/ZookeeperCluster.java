@@ -25,8 +25,6 @@ import io.strimzi.api.kafka.model.JvmOptions;
 import io.strimzi.api.kafka.model.Kafka;
 import io.strimzi.api.kafka.model.KafkaClusterSpec;
 import io.strimzi.api.kafka.model.KafkaResources;
-import io.strimzi.api.kafka.model.Probe;
-import io.strimzi.api.kafka.model.ProbeBuilder;
 import io.strimzi.api.kafka.model.StrimziPodSet;
 import io.strimzi.api.kafka.model.ZookeeperClusterSpec;
 import io.strimzi.api.kafka.model.status.Condition;
@@ -46,19 +44,21 @@ import io.strimzi.operator.cluster.model.metrics.SupportsMetrics;
 import io.strimzi.operator.cluster.model.securityprofiles.ContainerSecurityProviderContextImpl;
 import io.strimzi.operator.cluster.model.securityprofiles.PodSecurityProviderContextImpl;
 import io.strimzi.operator.common.Annotations;
-import io.strimzi.operator.common.MetricsAndLogging;
 import io.strimzi.operator.common.Reconciliation;
 import io.strimzi.operator.common.Util;
 import io.strimzi.operator.common.model.Labels;
-import io.strimzi.operator.common.operator.resource.StatusUtils;
+import io.strimzi.operator.common.model.StatusUtils;
 
 import java.io.IOException;
 import java.util.ArrayList;
-import java.util.Collections;
 import java.util.HashMap;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.function.Function;
+import java.util.stream.Collectors;
+import java.util.stream.IntStream;
 
 import static java.util.Collections.emptyMap;
 
@@ -66,7 +66,7 @@ import static java.util.Collections.emptyMap;
  * ZooKeeper cluster model
  */
 @SuppressWarnings({"checkstyle:ClassFanOutComplexity"})
-public class ZookeeperCluster extends AbstractStatefulModel implements SupportsMetrics, SupportsLogging, SupportsJmx {
+public class ZookeeperCluster extends AbstractModel implements SupportsMetrics, SupportsLogging, SupportsJmx {
     /**
      * Port for plaintext access for ZooKeeper clients (available inside the pod only)
      */
@@ -110,10 +110,16 @@ public class ZookeeperCluster extends AbstractStatefulModel implements SupportsM
     private LoggingModel logging;
     /* test */ ZookeeperConfiguration configuration;
 
-    private static final Probe DEFAULT_HEALTHCHECK_OPTIONS = new ProbeBuilder()
-            .withTimeoutSeconds(5)
-            .withInitialDelaySeconds(15)
-            .build();
+    /**
+     * Storage configuration
+     */
+    protected Storage storage;
+
+    /**
+     * Warning conditions generated from the Custom Resource
+     */
+    protected List<Condition> warningConditions = new ArrayList<>(0);
+
     private static final boolean DEFAULT_ZOOKEEPER_SNAPSHOT_CHECK_ENABLED = true;
 
     // Zookeeper configuration keys (EnvVariables)
@@ -147,16 +153,12 @@ public class ZookeeperCluster extends AbstractStatefulModel implements SupportsM
      *
      * @param reconciliation The reconciliation
      * @param resource Kubernetes resource with metadata containing the namespace and cluster name
+     * @param sharedEnvironmentProvider Shared environment provider
      */
-    private ZookeeperCluster(Reconciliation reconciliation, HasMetadata resource) {
-        super(reconciliation, resource, KafkaResources.zookeeperStatefulSetName(resource.getMetadata().getName()), COMPONENT_TYPE);
+    private ZookeeperCluster(Reconciliation reconciliation, HasMetadata resource, SharedEnvironmentProvider sharedEnvironmentProvider) {
+        super(reconciliation, resource, KafkaResources.zookeeperStatefulSetName(resource.getMetadata().getName()), COMPONENT_TYPE, sharedEnvironmentProvider);
 
         this.image = null;
-        this.replicas = ZookeeperClusterSpec.DEFAULT_REPLICAS;
-        this.readinessPath = "/opt/kafka/zookeeper_healthcheck.sh";
-        this.readinessProbeOptions = DEFAULT_HEALTHCHECK_OPTIONS;
-        this.livenessPath = "/opt/kafka/zookeeper_healthcheck.sh";
-        this.livenessProbeOptions = DEFAULT_HEALTHCHECK_OPTIONS;
         this.isSnapshotCheckEnabled = DEFAULT_ZOOKEEPER_SNAPSHOT_CHECK_ENABLED;
     }
 
@@ -166,11 +168,12 @@ public class ZookeeperCluster extends AbstractStatefulModel implements SupportsM
      * @param reconciliation    Reconciliation marker
      * @param kafkaAssembly     The Kafka CR
      * @param versions          Supported Kafka versions
+     * @param sharedEnvironmentProvider Shared environment provider
      *
      * @return  New instance of the ZooKeeper cluster model
      */
-    public static ZookeeperCluster fromCrd(Reconciliation reconciliation, Kafka kafkaAssembly, KafkaVersion.Lookup versions) {
-        return fromCrd(reconciliation, kafkaAssembly, versions, null, 0);
+    public static ZookeeperCluster fromCrd(Reconciliation reconciliation, Kafka kafkaAssembly, KafkaVersion.Lookup versions, SharedEnvironmentProvider sharedEnvironmentProvider) {
+        return fromCrd(reconciliation, kafkaAssembly, versions, null, 0, sharedEnvironmentProvider);
     }
 
     /**
@@ -181,18 +184,17 @@ public class ZookeeperCluster extends AbstractStatefulModel implements SupportsM
      * @param versions          Supported Kafka versions
      * @param oldStorage        Old storage configuration (based on the actual Kubernetes cluster)
      * @param oldReplicas       Current number of replicas (based on the actual Kubernetes cluster)
+     * @param sharedEnvironmentProvider Shared environment provider
      *
      * @return  New instance of the ZooKeeper cluster model
      */
     @SuppressWarnings({"checkstyle:MethodLength", "checkstyle:CyclomaticComplexity", "checkstyle:NPathComplexity"})
-    public static ZookeeperCluster fromCrd(Reconciliation reconciliation, Kafka kafkaAssembly, KafkaVersion.Lookup versions, Storage oldStorage, int oldReplicas) {
-        ZookeeperCluster result = new ZookeeperCluster(reconciliation, kafkaAssembly);
+    public static ZookeeperCluster fromCrd(Reconciliation reconciliation, Kafka kafkaAssembly, KafkaVersion.Lookup versions, Storage oldStorage, int oldReplicas, SharedEnvironmentProvider sharedEnvironmentProvider) {
+        ZookeeperCluster result = new ZookeeperCluster(reconciliation, kafkaAssembly, sharedEnvironmentProvider);
         ZookeeperClusterSpec zookeeperClusterSpec = kafkaAssembly.getSpec().getZookeeper();
 
         int replicas = zookeeperClusterSpec.getReplicas();
-        if (replicas <= 0) {
-            replicas = ZookeeperClusterSpec.DEFAULT_REPLICAS;
-        }
+
         if (replicas == 1 && zookeeperClusterSpec.getStorage() != null && "ephemeral".equals(zookeeperClusterSpec.getStorage().getType())) {
             LOGGER.warnCr(reconciliation, "A ZooKeeper cluster with a single replica and ephemeral storage will be in a defective state after any restart or rolling update. It is recommended that a minimum of three replicas are used.");
         }
@@ -208,20 +210,22 @@ public class ZookeeperCluster extends AbstractStatefulModel implements SupportsM
         }
         result.image = image;
 
-        if (zookeeperClusterSpec.getReadinessProbe() != null) {
-            result.readinessProbeOptions = zookeeperClusterSpec.getReadinessProbe();
-        }
-        if (zookeeperClusterSpec.getLivenessProbe() != null) {
-            result.livenessProbeOptions = zookeeperClusterSpec.getLivenessProbe();
-        }
+        result.readinessProbeOptions = ProbeUtils.extractReadinessProbeOptionsOrDefault(zookeeperClusterSpec, ProbeUtils.DEFAULT_HEALTHCHECK_OPTIONS);
+        result.livenessProbeOptions = ProbeUtils.extractLivenessProbeOptionsOrDefault(zookeeperClusterSpec, ProbeUtils.DEFAULT_HEALTHCHECK_OPTIONS);
 
         result.gcLoggingEnabled = zookeeperClusterSpec.getJvmOptions() == null ? JvmOptions.DEFAULT_GC_LOGGING_ENABLED : zookeeperClusterSpec.getJvmOptions().isGcLoggingEnabled();
 
         if (oldStorage != null) {
             Storage newStorage = zookeeperClusterSpec.getStorage();
-            StorageUtils.validatePersistentStorage(newStorage);
+            StorageUtils.validatePersistentStorage(newStorage, "Kafka.spec.zookeeper.storage");
 
-            StorageDiff diff = new StorageDiff(reconciliation, oldStorage, newStorage, oldReplicas, zookeeperClusterSpec.getReplicas());
+            StorageDiff diff = new StorageDiff(
+                    reconciliation,
+                    oldStorage,
+                    newStorage,
+                    IntStream.range(0, oldReplicas).boxed().collect(Collectors.toUnmodifiableSet()),
+                    IntStream.range(0, zookeeperClusterSpec.getReplicas()).boxed().collect(Collectors.toUnmodifiableSet())
+            );
 
             if (!diff.isEmpty()) {
                 LOGGER.warnCr(reconciliation, "Only the following changes to Zookeeper storage are allowed: " +
@@ -279,6 +283,32 @@ public class ZookeeperCluster extends AbstractStatefulModel implements SupportsM
         result.warningConditions.addAll(specChecker.run());
 
         return result;
+    }
+
+    /**
+     * @return The storage.
+     */
+    public Storage getStorage() {
+        return storage;
+    }
+
+    /**
+     * Set the Storage
+     *
+     * @param storage Persistent Storage configuration
+     */
+    protected void setStorage(Storage storage) {
+        StorageUtils.validatePersistentStorage(storage, "Kafka.spec.zookeeper.storage");
+        this.storage = storage;
+    }
+
+    /**
+     * Returns a list of warning conditions set by the model. Returns an empty list if no warning conditions were set.
+     *
+     * @return  List of warning conditions.
+     */
+    public List<Condition> getWarningConditions() {
+        return warningConditions;
     }
 
     /**
@@ -451,8 +481,8 @@ public class ZookeeperCluster extends AbstractStatefulModel implements SupportsM
                 getEnvVars(),
                 getContainerPortList(),
                 getVolumeMounts(),
-                ProbeGenerator.execProbe(livenessProbeOptions, Collections.singletonList(livenessPath)),
-                ProbeGenerator.execProbe(readinessProbeOptions, Collections.singletonList(readinessPath)),
+                ProbeUtils.execProbe(livenessProbeOptions, List.of("/opt/kafka/zookeeper_healthcheck.sh")),
+                ProbeUtils.execProbe(readinessProbeOptions, List.of("/opt/kafka/zookeeper_healthcheck.sh")),
                 imagePullPolicy
         );
     }
@@ -465,13 +495,13 @@ public class ZookeeperCluster extends AbstractStatefulModel implements SupportsM
 
         varList.addAll(jmx.envVars());
 
-        ModelUtils.heapOptions(varList, 75, 2L * 1024L * 1024L * 1024L, jvmOptions, resources);
-        ModelUtils.jvmPerformanceOptions(varList, jvmOptions);
-        ModelUtils.jvmSystemProperties(varList, jvmOptions);
+        JvmOptionUtils.heapOptions(varList, 75, 2L * 1024L * 1024L * 1024L, jvmOptions, resources);
+        JvmOptionUtils.jvmPerformanceOptions(varList, jvmOptions);
+        JvmOptionUtils.jvmSystemProperties(varList, jvmOptions);
         varList.add(ContainerUtils.createEnvVar(ENV_VAR_ZOOKEEPER_CONFIGURATION, configuration.getConfiguration()));
 
         // Add shared environment variables used for all containers
-        varList.addAll(ContainerUtils.requiredEnvVars());
+        varList.addAll(sharedEnvironmentProvider.variables());
 
         ContainerUtils.addContainerEnvsToExistingEnvs(reconciliation, varList, templateContainer);
 
@@ -566,15 +596,6 @@ public class ZookeeperCluster extends AbstractStatefulModel implements SupportsM
     }
 
     /**
-     * Generates the PodDisruptionBudget V1Beta1.
-     *
-     * @return The PodDisruptionBudget V1Beta1.
-     */
-    public io.fabric8.kubernetes.api.model.policy.v1beta1.PodDisruptionBudget generatePodDisruptionBudgetV1Beta1() {
-        return PodDisruptionBudgetUtils.createCustomControllerPodDisruptionBudgetV1Beta1(componentName, namespace, labels, ownerReference, templatePodDisruptionBudget, replicas);
-    }
-
-    /**
      * Generates a configuration ConfigMap with metrics and logging configurations and node count.
      *
      * @param metricsAndLogging    The ConfigMaps with original logging and metrics configurations.
@@ -582,7 +603,7 @@ public class ZookeeperCluster extends AbstractStatefulModel implements SupportsM
      * @return      The generated configuration ConfigMap.
      */
     public ConfigMap generateConfigurationConfigMap(MetricsAndLogging metricsAndLogging) {
-        Map<String, String> data = MetricsAndLoggingUtils.generateMetricsAndLogConfigMapData(reconciliation, this, metricsAndLogging);
+        Map<String, String> data = ConfigMapUtils.generateMetricsAndLogConfigMapData(reconciliation, this, metricsAndLogging);
         data.put(CONFIG_MAP_KEY_ZOOKEEPER_NODE_COUNT, Integer.toString(replicas));
 
         return ConfigMapUtils
@@ -624,13 +645,13 @@ public class ZookeeperCluster extends AbstractStatefulModel implements SupportsM
     }
 
     /**
-     * @return  List of node references for this ZooKeeper cluster
+     * @return  Set of node references for this ZooKeeper cluster
      */
-    private List<NodeRef> nodes()   {
-        List<NodeRef> nodes = new ArrayList<>();
+    public Set<NodeRef> nodes()   {
+        Set<NodeRef> nodes = new LinkedHashSet<>();
 
         for (int i = 0; i < replicas; i++)  {
-            nodes.add(new NodeRef(getPodName(i), i));
+            nodes.add(new NodeRef(getPodName(i), i, null, false, false));
         }
 
         return nodes;

@@ -7,32 +7,28 @@ package io.strimzi.systemtest.templates.crd;
 import io.strimzi.api.kafka.model.KafkaTopic;
 import io.strimzi.api.kafka.model.KafkaTopicBuilder;
 import io.strimzi.operator.common.model.Labels;
-import io.strimzi.systemtest.Constants;
-import io.strimzi.systemtest.resources.ResourceManager;
+import io.strimzi.systemtest.TestConstants;
+import io.strimzi.systemtest.storage.TestStorage;
 import io.strimzi.test.TestUtils;
 
 public class KafkaTopicTemplates {
 
     private KafkaTopicTemplates() {}
 
-    public static KafkaTopicBuilder topic(String clusterName, String topicName) {
-        return defaultTopic(clusterName, topicName, 1, 1, 1, ResourceManager.kubeClient().getNamespace());
+    public static KafkaTopicBuilder topic(TestStorage testStorage) {
+        return defaultTopic(testStorage.getClusterName(), testStorage.getTopicName(), 1, 1, 1, testStorage.getNamespaceName());
     }
 
     public static KafkaTopicBuilder topic(String clusterName, String topicName, String topicNamespace) {
         return defaultTopic(clusterName, topicName, 1, 1, 1, topicNamespace);
     }
 
-    public static KafkaTopicBuilder topic(String clusterName, String topicName, int partitions) {
-        return defaultTopic(clusterName, topicName, partitions, 1, 1, ResourceManager.kubeClient().getNamespace());
+    public static KafkaTopicBuilder topic(String clusterName, String topicName, int partitions, String topicNamespace) {
+        return defaultTopic(clusterName, topicName, partitions, 1, 1, topicNamespace);
     }
 
-    public static KafkaTopicBuilder topic(String clusterName, String topicName, int partitions, int replicas) {
-        return defaultTopic(clusterName, topicName, partitions, replicas, replicas, ResourceManager.kubeClient().getNamespace());
-    }
-
-    public static KafkaTopicBuilder topic(String clusterName, String topicName, int partitions, int replicas, int minIsr) {
-        return defaultTopic(clusterName, topicName, partitions, replicas, minIsr, ResourceManager.kubeClient().getNamespace());
+    public static KafkaTopicBuilder topic(String clusterName, String topicName, int partitions, int replicas, String topicNamespace) {
+        return defaultTopic(clusterName, topicName, partitions, replicas, replicas, topicNamespace);
     }
 
     public static KafkaTopicBuilder topic(String clusterName, String topicName, int partitions, int replicas, int minIsr, String topicNamespace) {
@@ -40,7 +36,7 @@ public class KafkaTopicTemplates {
     }
 
     public static KafkaTopicBuilder defaultTopic(String clusterName, String topicName, int partitions, int replicas, int minIsr, String topicNamespace) {
-        KafkaTopic kafkaTopic = getKafkaTopicFromYaml(Constants.PATH_TO_KAFKA_TOPIC_CONFIG);
+        KafkaTopic kafkaTopic = getKafkaTopicFromYaml(TestConstants.PATH_TO_KAFKA_TOPIC_CONFIG);
         return new KafkaTopicBuilder(kafkaTopic)
             .withNewMetadata()
                 .withName(topicName)

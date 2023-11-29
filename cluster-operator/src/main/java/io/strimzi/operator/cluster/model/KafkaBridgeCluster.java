@@ -33,8 +33,6 @@ import io.strimzi.api.kafka.model.KafkaBridgeHttpConfig;
 import io.strimzi.api.kafka.model.KafkaBridgeProducerSpec;
 import io.strimzi.api.kafka.model.KafkaBridgeResources;
 import io.strimzi.api.kafka.model.KafkaBridgeSpec;
-import io.strimzi.api.kafka.model.Probe;
-import io.strimzi.api.kafka.model.ProbeBuilder;
 import io.strimzi.api.kafka.model.Rack;
 import io.strimzi.api.kafka.model.authentication.KafkaClientAuthentication;
 import io.strimzi.api.kafka.model.template.ContainerTemplate;
@@ -51,9 +49,9 @@ import io.strimzi.operator.cluster.model.logging.LoggingModel;
 import io.strimzi.operator.cluster.model.logging.SupportsLogging;
 import io.strimzi.operator.cluster.model.securityprofiles.ContainerSecurityProviderContextImpl;
 import io.strimzi.operator.cluster.model.securityprofiles.PodSecurityProviderContextImpl;
-import io.strimzi.operator.common.MetricsAndLogging;
 import io.strimzi.operator.common.Reconciliation;
 import io.strimzi.operator.common.Util;
+import io.strimzi.operator.common.model.InvalidResourceException;
 import io.strimzi.operator.common.model.Labels;
 import io.vertx.core.json.JsonArray;
 import io.vertx.core.json.JsonObject;
@@ -81,15 +79,6 @@ public class KafkaBridgeCluster extends AbstractModel implements SupportsLogging
     protected static final String ENV_VAR_KAFKA_INIT_INIT_FOLDER_KEY = "INIT_FOLDER";
     private static final String LOG_AND_METRICS_CONFIG_VOLUME_NAME = "kafka-metrics-and-logging";
     private static final String LOG_AND_METRICS_CONFIG_VOLUME_MOUNT = "/opt/strimzi/custom-config/";
-
-    // Configuration defaults
-    protected static final int DEFAULT_REPLICAS = 1;
-    protected static final int DEFAULT_HEALTHCHECK_DELAY = 15;
-    protected static final int DEFAULT_HEALTHCHECK_TIMEOUT = 5;
-
-    private static final Probe DEFAULT_HEALTHCHECK_OPTIONS = new ProbeBuilder()
-            .withTimeoutSeconds(DEFAULT_HEALTHCHECK_TIMEOUT)
-            .withInitialDelaySeconds(DEFAULT_HEALTHCHECK_DELAY).build();
 
     // Cluster Operator environment variables for custom discovery labels and annotations
     protected static final String CO_ENV_VAR_CUSTOM_SERVICE_LABELS = "STRIMZI_CUSTOM_KAFKA_BRIDGE_SERVICE_LABELS";
@@ -167,15 +156,10 @@ public class KafkaBridgeCluster extends AbstractModel implements SupportsLogging
      *
      * @param reconciliation The reconciliation
      * @param resource Kubernetes resource with metadata containing the namespace and cluster name
+     * @param sharedEnvironmentProvider Shared environment provider
      */
-    private KafkaBridgeCluster(Reconciliation reconciliation, HasMetadata resource) {
-        super(reconciliation, resource, KafkaBridgeResources.deploymentName(resource.getMetadata().getName()), COMPONENT_TYPE);
-
-        this.replicas = DEFAULT_REPLICAS;
-        this.readinessPath = "/ready";
-        this.livenessPath = "/healthy";
-        this.livenessProbeOptions = DEFAULT_HEALTHCHECK_OPTIONS;
-        this.readinessProbeOptions = DEFAULT_HEALTHCHECK_OPTIONS;
+    private KafkaBridgeCluster(Reconciliation reconciliation, HasMetadata resource, SharedEnvironmentProvider sharedEnvironmentProvider) {
+        super(reconciliation, resource, KafkaBridgeResources.deploymentName(resource.getMetadata().getName()), COMPONENT_TYPE, sharedEnvironmentProvider);
     }
 
     /**
@@ -183,12 +167,14 @@ public class KafkaBridgeCluster extends AbstractModel implements SupportsLogging
      *
      * @param reconciliation Reconciliation marker
      * @param kafkaBridge    KafkaBridge custom resource
+     * @param sharedEnvironmentProvider Shared environment provider
      * @return KafkaBridgeCluster instance
      */
     @SuppressWarnings({"checkstyle:NPathComplexity"})
-    public static KafkaBridgeCluster fromCrd(Reconciliation reconciliation, KafkaBridge kafkaBridge) {
-
-        KafkaBridgeCluster result = new KafkaBridgeCluster(reconciliation, kafkaBridge);
+    public static KafkaBridgeCluster fromCrd(Reconciliation reconciliation,
+                                             KafkaBridge kafkaBridge,
+                                             SharedEnvironmentProvider sharedEnvironmentProvider) {
+        KafkaBridgeCluster result = new KafkaBridgeCluster(reconciliation, kafkaBridge, sharedEnvironmentProvider);
 
         KafkaBridgeSpec spec = kafkaBridge.getSpec();
         result.tracing = spec.getTracing();
@@ -212,14 +198,9 @@ public class KafkaBridgeCluster extends AbstractModel implements SupportsLogging
             initImage = System.getenv().getOrDefault(ClusterOperatorConfig.STRIMZI_DEFAULT_KAFKA_INIT_IMAGE, "quay.io/strimzi/operator:latest");
         }
         result.initImage = initImage;
-        if (kafkaBridge.getSpec().getLivenessProbe() != null) {
-            result.livenessProbeOptions = kafkaBridge.getSpec().getLivenessProbe();
-        }
 
-        if (kafkaBridge.getSpec().getReadinessProbe() != null) {
-            result.readinessProbeOptions = kafkaBridge.getSpec().getReadinessProbe();
-        }
-
+        result.readinessProbeOptions = ProbeUtils.extractReadinessProbeOptionsOrDefault(spec, ProbeUtils.DEFAULT_HEALTHCHECK_OPTIONS);
+        result.livenessProbeOptions = ProbeUtils.extractLivenessProbeOptionsOrDefault(spec, ProbeUtils.DEFAULT_HEALTHCHECK_OPTIONS);
         result.isMetricsEnabled = spec.getEnableMetrics();
 
         result.setTls(spec.getTls() != null ? spec.getTls() : null);
@@ -273,6 +254,7 @@ public class KafkaBridgeCluster extends AbstractModel implements SupportsLogging
                 ownerReference,
                 templateService,
                 List.of(ServiceUtils.createServicePort(REST_API_PORT_NAME, port, port, "TCP")),
+                labels.strimziSelectorLabels(),
                 ModelUtils.getCustomLabelsOrAnnotations(CO_ENV_VAR_CUSTOM_SERVICE_LABELS),
                 Util.mergeLabelsOrAnnotations(getDiscoveryAnnotation(port), ModelUtils.getCustomLabelsOrAnnotations(CO_ENV_VAR_CUSTOM_SERVICE_ANNOTATIONS))
         );
@@ -405,8 +387,8 @@ public class KafkaBridgeCluster extends AbstractModel implements SupportsLogging
                 getEnvVars(),
                 getContainerPortList(),
                 getVolumeMounts(),
-                ProbeGenerator.httpProbe(livenessProbeOptions, livenessPath, REST_API_PORT_NAME),
-                ProbeGenerator.httpProbe(readinessProbeOptions, readinessPath, REST_API_PORT_NAME),
+                ProbeUtils.httpProbe(livenessProbeOptions, "/healthy", REST_API_PORT_NAME),
+                ProbeUtils.httpProbe(readinessProbeOptions, "/ready", REST_API_PORT_NAME),
                 imagePullPolicy
         );
     }
@@ -415,7 +397,7 @@ public class KafkaBridgeCluster extends AbstractModel implements SupportsLogging
         List<EnvVar> varList = new ArrayList<>();
         varList.add(ContainerUtils.createEnvVar(ENV_VAR_KAFKA_BRIDGE_METRICS_ENABLED, String.valueOf(isMetricsEnabled)));
         varList.add(ContainerUtils.createEnvVar(ENV_VAR_STRIMZI_GC_LOG_ENABLED, String.valueOf(gcLoggingEnabled)));
-        ModelUtils.javaOptions(varList, jvmOptions);
+        JvmOptionUtils.javaOptions(varList, jvmOptions);
 
         varList.add(ContainerUtils.createEnvVar(ENV_VAR_KAFKA_BRIDGE_BOOTSTRAP_SERVERS, bootstrapServers));
         varList.add(ContainerUtils.createEnvVar(ENV_VAR_KAFKA_BRIDGE_ADMIN_CLIENT_CONFIG, kafkaBridgeAdminClient == null ? "" : new KafkaBridgeAdminClientConfiguration(reconciliation, kafkaBridgeAdminClient.getConfig().entrySet()).getConfiguration()));
@@ -466,7 +448,7 @@ public class KafkaBridgeCluster extends AbstractModel implements SupportsLogging
         }
 
         // Add shared environment variables used for all containers
-        varList.addAll(ContainerUtils.requiredEnvVars());
+        varList.addAll(sharedEnvironmentProvider.variables());
 
         ContainerUtils.addContainerEnvsToExistingEnvs(reconciliation, varList, templateContainer);
 
@@ -493,10 +475,10 @@ public class KafkaBridgeCluster extends AbstractModel implements SupportsLogging
     /**
      * Sets the configured authentication
      *
-     * @param authetication Authentication configuration
+     * @param authentication Authentication configuration
      */
-    protected void setAuthentication(KafkaClientAuthentication authetication) {
-        this.authentication = authetication;
+    protected void setAuthentication(KafkaClientAuthentication authentication) {
+        this.authentication = authentication;
     }
 
     /**
@@ -506,15 +488,6 @@ public class KafkaBridgeCluster extends AbstractModel implements SupportsLogging
      */
     public PodDisruptionBudget generatePodDisruptionBudget() {
         return PodDisruptionBudgetUtils.createPodDisruptionBudget(componentName, namespace, labels, ownerReference, templatePodDisruptionBudget);
-    }
-
-    /**
-     * Generates the PodDisruptionBudgetV1Beta1
-     *
-     * @return The pod disruption budget V1Beta1.
-     */
-    public io.fabric8.kubernetes.api.model.policy.v1beta1.PodDisruptionBudget generatePodDisruptionBudgetV1Beta1() {
-        return PodDisruptionBudgetUtils.createPodDisruptionBudgetV1Beta1(componentName, namespace, labels, ownerReference, templatePodDisruptionBudget);
     }
 
     /**
@@ -602,7 +575,7 @@ public class KafkaBridgeCluster extends AbstractModel implements SupportsLogging
         varList.add(ContainerUtils.createEnvVar(ENV_VAR_KAFKA_INIT_INIT_FOLDER_KEY, INIT_VOLUME_MOUNT));
 
         // Add shared environment variables used for all containers
-        varList.addAll(ContainerUtils.requiredEnvVars());
+        varList.addAll(sharedEnvironmentProvider.variables());
 
         ContainerUtils.addContainerEnvsToExistingEnvs(reconciliation, varList, templateInitContainer);
 
@@ -624,7 +597,7 @@ public class KafkaBridgeCluster extends AbstractModel implements SupportsLogging
                         namespace,
                         labels,
                         ownerReference,
-                        MetricsAndLoggingUtils.generateMetricsAndLogConfigMapData(reconciliation, this, metricsAndLogging)
+                        ConfigMapUtils.generateMetricsAndLogConfigMapData(reconciliation, this, metricsAndLogging)
                 );
     }
 

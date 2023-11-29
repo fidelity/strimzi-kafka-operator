@@ -4,9 +4,13 @@
  */
 package io.strimzi.systemtest.utils.kafkaUtils;
 
+import io.strimzi.api.kafka.model.KafkaResources;
 import io.strimzi.api.kafka.model.KafkaTopic;
-import io.strimzi.systemtest.Constants;
+import io.strimzi.systemtest.TestConstants;
+import io.strimzi.systemtest.Environment;
 import io.strimzi.systemtest.cli.KafkaCmdClient;
+import io.strimzi.systemtest.enums.ConditionStatus;
+import io.strimzi.systemtest.kafkaclients.internalClients.admin.AdminClient;
 import io.strimzi.systemtest.resources.ResourceManager;
 import io.strimzi.systemtest.resources.ResourceOperation;
 import io.strimzi.systemtest.resources.crd.KafkaTopicResource;
@@ -14,6 +18,7 @@ import io.strimzi.test.TestUtils;
 import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
 
+import java.time.Duration;
 import java.util.Arrays;
 import java.util.List;
 import java.util.Map;
@@ -23,6 +28,9 @@ import java.util.stream.Collectors;
 import static io.strimzi.systemtest.enums.CustomResourceStatus.NotReady;
 import static io.strimzi.systemtest.enums.CustomResourceStatus.Ready;
 import static io.strimzi.test.k8s.KubeClusterResource.cmdKubeClient;
+import static org.hamcrest.MatcherAssert.assertThat;
+import static org.hamcrest.Matchers.hasItems;
+import static org.hamcrest.Matchers.not;
 
 public class KafkaTopicUtils {
 
@@ -46,8 +54,8 @@ public class KafkaTopicUtils {
 
     /**
      * Method which return UID for specific topic
-     * @param namespaceName namespace name
-     * @param topicName topic name
+     * @param namespaceName Namespace name
+     * @param topicName Topic name
      * @return topic UID
      */
     public static String topicSnapshot(final String namespaceName, String topicName) {
@@ -62,14 +70,14 @@ public class KafkaTopicUtils {
      * @return topic new UID
      */
     public static String waitTopicHasRolled(final String namespaceName, String topicName, String topicUid) {
-        TestUtils.waitFor("Topic " + topicName + " has rolled", Constants.GLOBAL_POLL_INTERVAL, Constants.GLOBAL_TIMEOUT,
+        TestUtils.waitFor("Topic: " + namespaceName + "/" + topicName + " has rolled", TestConstants.GLOBAL_POLL_INTERVAL, TestConstants.GLOBAL_TIMEOUT, 
             () -> !topicUid.equals(topicSnapshot(namespaceName, topicName)));
         return topicSnapshot(namespaceName, topicName);
     }
 
     public static void waitForKafkaTopicCreation(String namespaceName, String topicName) {
-        LOGGER.info("Waiting for KafkaTopic {} creation ", topicName);
-        TestUtils.waitFor("KafkaTopic creation " + topicName, Constants.POLL_INTERVAL_FOR_RESOURCE_READINESS, READINESS_TIMEOUT,
+        LOGGER.info("Waiting for KafkaTopic: {}/{} creation ", namespaceName, topicName);
+        TestUtils.waitFor("creation of KafkaTopic: " + namespaceName + "/" + topicName, TestConstants.POLL_INTERVAL_FOR_RESOURCE_READINESS, READINESS_TIMEOUT,
             () -> KafkaTopicResource.kafkaTopicClient().inNamespace(namespaceName)
                     .withName(topicName).get().getStatus().getConditions().get(0).getType().equals(Ready.toString()),
             () -> LOGGER.info(KafkaTopicResource.kafkaTopicClient().inNamespace(namespaceName).withName(topicName).get())
@@ -77,8 +85,8 @@ public class KafkaTopicUtils {
     }
 
     public static void waitForKafkaTopicCreationByNamePrefix(String namespaceName, String topicNamePrefix) {
-        LOGGER.info("Waiting for KafkaTopic {} creation", topicNamePrefix);
-        TestUtils.waitFor("KafkaTopic creation " + topicNamePrefix, Constants.POLL_INTERVAL_FOR_RESOURCE_READINESS, READINESS_TIMEOUT,
+        LOGGER.info("Waiting for Topic {}/{} creation", namespaceName, topicNamePrefix);
+        TestUtils.waitFor("creation of KafkaTopic: " + namespaceName + "/" + topicNamePrefix, TestConstants.POLL_INTERVAL_FOR_RESOURCE_READINESS, READINESS_TIMEOUT,
             () -> KafkaTopicResource.kafkaTopicClient().inNamespace(namespaceName).list().getItems().stream()
                     .filter(topic -> topic.getMetadata().getName().contains(topicNamePrefix))
                     .findFirst().orElseThrow().getStatus().getConditions().get(0).getType().equals(Ready.toString())
@@ -86,13 +94,13 @@ public class KafkaTopicUtils {
     }
 
     public static void waitForKafkaTopicDeletion(String namespaceName, String topicName) {
-        LOGGER.info("Waiting for KafkaTopic {} deletion", topicName);
-        TestUtils.waitFor("KafkaTopic deletion " + topicName, Constants.POLL_INTERVAL_FOR_RESOURCE_READINESS, DELETION_TIMEOUT,
+        LOGGER.info("Waiting for KafkaTopic: {}/{} deletion", namespaceName, topicName);
+        TestUtils.waitFor("deletion of KafkaTopic: " + namespaceName + "/" + topicName, TestConstants.POLL_INTERVAL_FOR_RESOURCE_READINESS, DELETION_TIMEOUT,
             () -> {
                 if (KafkaTopicResource.kafkaTopicClient().inNamespace(namespaceName).withName(topicName).get() == null) {
                     return true;
                 } else {
-                    LOGGER.warn("KafkaTopic {} is not deleted yet! Triggering force delete by cmd client!", topicName);
+                    LOGGER.warn("KafkaTopic: {}/{} is not deleted yet! Triggering force delete by cmd client!", namespaceName, topicName);
                     cmdKubeClient(namespaceName).deleteByName(KafkaTopic.RESOURCE_KIND, topicName);
                     return false;
                 }
@@ -102,18 +110,18 @@ public class KafkaTopicUtils {
     }
 
     public static void waitForKafkaTopicPartitionChange(String namespaceName, String topicName, int partitions) {
-        LOGGER.info("Waiting for KafkaTopic change {}", topicName);
-        TestUtils.waitFor("KafkaTopic change " + topicName, Constants.POLL_INTERVAL_FOR_RESOURCE_READINESS, Constants.GLOBAL_TIMEOUT,
+        LOGGER.info("Waiting for KafkaTopic: {}/{} to change", namespaceName, topicName);
+        TestUtils.waitFor("change of KafkaTopic: " + namespaceName + "/" + topicName, TestConstants.POLL_INTERVAL_FOR_RESOURCE_READINESS, TestConstants.GLOBAL_TIMEOUT,
             () -> KafkaTopicResource.kafkaTopicClient().inNamespace(namespaceName).withName(topicName).get().getSpec().getPartitions() == partitions,
-            () -> LOGGER.error("Kafka Topic {} did not change partition", KafkaTopicResource.kafkaTopicClient().inNamespace(namespaceName).withName(topicName).get())
+            () -> LOGGER.error("KafkaTopic: {}/{} did not change partition", namespaceName, KafkaTopicResource.kafkaTopicClient().inNamespace(namespaceName).withName(topicName).get())
         );
     }
 
     public static void waitForKafkaTopicReplicasChange(String namespaceName, String topicName, int replicas) {
-        LOGGER.info("Waiting for KafkaTopic change {}", topicName);
-        TestUtils.waitFor("KafkaTopic change " + topicName, Constants.POLL_INTERVAL_FOR_RESOURCE_READINESS, Constants.GLOBAL_TIMEOUT,
+        LOGGER.info("Waiting for KafkaTopic: {}/{} to change", namespaceName, topicName);
+        TestUtils.waitFor("change of KafkaTopic: " + namespaceName + "/" + topicName, TestConstants.POLL_INTERVAL_FOR_RESOURCE_READINESS, TestConstants.GLOBAL_TIMEOUT,
             () -> KafkaTopicResource.kafkaTopicClient().inNamespace(namespaceName).withName(topicName).get().getSpec().getReplicas() == replicas,
-            () -> LOGGER.error("Kafka Topic {} did not change replicas", KafkaTopicResource.kafkaTopicClient().inNamespace(namespaceName).withName(topicName).get())
+            () -> LOGGER.error("KafkaTopic: {}/{} did not change replicas", namespaceName, KafkaTopicResource.kafkaTopicClient().inNamespace(namespaceName).withName(topicName).get())
         );
     }
 
@@ -121,11 +129,15 @@ public class KafkaTopicUtils {
      * Wait until KafkaTopic is in desired status
      * @param namespaceName Namespace name
      * @param topicName name of KafkaTopic
-     * @param state desired state
+     * @param conditionType desired state
      */
-    public static boolean waitForKafkaTopicStatus(String namespaceName, String topicName, Enum<?> state) {
+    public static boolean waitForKafkaTopicStatus(String namespaceName, String topicName, Enum<?> conditionType) {
+        return waitForKafkaTopicStatus(namespaceName, topicName, conditionType, ConditionStatus.True);
+    }
+
+    public static boolean waitForKafkaTopicStatus(String namespaceName, String topicName, Enum<?> conditionType, ConditionStatus conditionStatus) {
         return ResourceManager.waitForResourceStatus(KafkaTopicResource.kafkaTopicClient(), KafkaTopic.RESOURCE_KIND,
-            namespaceName, topicName, state, ResourceOperation.getTimeoutForResourceReadiness(KafkaTopic.RESOURCE_KIND));
+            namespaceName, topicName, conditionType, conditionStatus, ResourceOperation.getTimeoutForResourceReadiness(KafkaTopic.RESOURCE_KIND));
     }
 
     public static boolean waitForKafkaTopicReady(String namespaceName, String topicName) {
@@ -133,17 +145,20 @@ public class KafkaTopicUtils {
     }
 
     public static boolean waitForKafkaTopicNotReady(final String namespaceName, String topicName) {
+        if (Environment.isUnidirectionalTopicOperatorEnabled()) {
+            return waitForKafkaTopicStatus(namespaceName, topicName, Ready, ConditionStatus.False);
+        }
         return waitForKafkaTopicStatus(namespaceName, topicName, NotReady);
     }
 
     public static void waitForTopicConfigContains(String namespaceName, String topicName, Map<String, Object> config) {
-        LOGGER.info("Wait until topic {} contains correct config", topicName);
-        TestUtils.waitFor("Wait for correct config",
-                Constants.GLOBAL_POLL_INTERVAL, Constants.GLOBAL_STATUS_TIMEOUT,
+        LOGGER.info("Waiting for KafkaTopic: {}/{} to contain correct config", namespaceName, topicName);
+        TestUtils.waitFor("KafkaTopic: " + namespaceName + "/" + topicName + " to contain correct config",
+                TestConstants.GLOBAL_POLL_INTERVAL, TestConstants.GLOBAL_STATUS_TIMEOUT,
                 () -> KafkaTopicUtils.configsAreEqual(KafkaTopicResource.kafkaTopicClient()
                         .inNamespace(namespaceName).withName(topicName).get().getSpec().getConfig(), config)
         );
-        LOGGER.info("Topic {} contains correct config", topicName);
+        LOGGER.info("KafkaTopic: {}/{} contains correct config", namespaceName, topicName);
     }
 
     public static boolean configsAreEqual(Map<String, Object> actualConf, Map<String, Object> expectedConf) {
@@ -159,19 +174,19 @@ public class KafkaTopicUtils {
 
         String oldSpec = KafkaCmdClient.describeTopicUsingPodCli(namespaceName, scraperPodName, bootstrapServer, topicName);
 
-        TestUtils.waitFor("KafkaTopic's spec will be stable", Constants.GLOBAL_POLL_INTERVAL, Constants.GLOBAL_STATUS_TIMEOUT, () -> {
+        TestUtils.waitFor("KafkaTopic's spec to be stable", TestConstants.GLOBAL_POLL_INTERVAL, TestConstants.GLOBAL_STATUS_TIMEOUT, () -> {
             if (oldSpec.equals(KafkaCmdClient.describeTopicUsingPodCli(namespaceName, scraperPodName, bootstrapServer, topicName))) {
                 stableCounter[0]++;
-                if (stableCounter[0] == Constants.GLOBAL_STABILITY_OFFSET_COUNT) {
-                    LOGGER.info("KafkaTopic's spec is stable for {} polls intervals", stableCounter[0]);
+                if (stableCounter[0] == TestConstants.GLOBAL_STABILITY_OFFSET_COUNT) {
+                    LOGGER.info("KafkaTopic's spec is stable for: {} poll intervals", stableCounter[0]);
                     return true;
                 }
             } else {
-                LOGGER.info("KafkaTopic's spec is not stable. Going to set the counter to zero.");
+                LOGGER.info("KafkaTopic's spec is not stable. Going to set the counter to zero");
                 stableCounter[0] = 0;
                 return false;
             }
-            LOGGER.info("KafkaTopic's spec gonna be stable in {} polls", Constants.GLOBAL_STABILITY_OFFSET_COUNT - stableCounter[0]);
+            LOGGER.info("KafkaTopic's spec gonna be stable in {} polls", TestConstants.GLOBAL_STABILITY_OFFSET_COUNT - stableCounter[0]);
             return false;
         });
     }
@@ -189,14 +204,20 @@ public class KafkaTopicUtils {
     }
 
     public static void waitForTopicsByPrefixDeletionUsingPodCli(String namespace, String prefix, String bootstrapName, String scraperPodName, String properties) {
-        LOGGER.info("Waiting for all topics with prefix {} will be deleted from Kafka", prefix);
-        TestUtils.waitFor(String.format("all topics with prefix %s deletion", prefix), Constants.GLOBAL_POLL_INTERVAL, DELETION_TIMEOUT,
+        LOGGER.info("Waiting for all Topics with prefix: {} to be deleted from Kafka", prefix);
+        TestUtils.waitFor("deletion of all Topics with prefix: " + prefix, TestConstants.GLOBAL_POLL_INTERVAL, DELETION_TIMEOUT,
             () -> !KafkaCmdClient.listTopicsUsingPodCliWithConfigProperties(namespace, scraperPodName, bootstrapName, properties).contains(prefix));
     }
 
+    public static void waitForDeletionOfTopicsWithPrefix(String topicPrefix, AdminClient adminClient) {
+        LOGGER.info("Waiting for all Topics with prefix: {} to be deleted from Kafka", topicPrefix);
+        TestUtils.waitFor("deletion of all Topics with prefix: " + topicPrefix, TestConstants.GLOBAL_POLL_INTERVAL, DELETION_TIMEOUT,
+            () -> !adminClient.listTopics().contains(topicPrefix));
+    }
+
     public static void waitForTopicWillBePresentInKafka(String namespaceName, String topicName, String bootstrapName, String scraperPodName) {
-        LOGGER.info("Waiting for KafkaTopic: {} will be present in Kafka", topicName);
-        TestUtils.waitFor(String.format("KafkaTopic: %s will be present in Kafka", topicName), Constants.GLOBAL_POLL_INTERVAL, Constants.GLOBAL_STATUS_TIMEOUT,
+        LOGGER.info("Waiting for KafkaTopic: {}/{} to be present in Kafka", namespaceName, topicName);
+        TestUtils.waitFor("KafkaTopic: " + namespaceName + "/" + topicName + " to be present in Kafka", TestConstants.GLOBAL_POLL_INTERVAL, TestConstants.TIMEOUT_FOR_RESOURCE_RECOVERY,
             () -> KafkaCmdClient.listTopicsUsingPodCli(namespaceName, scraperPodName, bootstrapName).contains(topicName));
     }
 
@@ -210,7 +231,7 @@ public class KafkaTopicUtils {
     }
 
     public static void waitForTopicWithPrefixDeletion(String namespaceName, String topicPrefix) {
-        TestUtils.waitFor(String.format("all topics with prefix %s deletion", topicPrefix), Constants.GLOBAL_POLL_INTERVAL, DELETION_TIMEOUT,
+        TestUtils.waitFor("deletion of all topics with prefix: " + topicPrefix, TestConstants.GLOBAL_POLL_INTERVAL, DELETION_TIMEOUT,
             () -> {
                 try {
                     return getAllKafkaTopicsWithPrefix(namespaceName, topicPrefix).size() == 0;
@@ -218,5 +239,50 @@ public class KafkaTopicUtils {
                     return e.getMessage().contains("Not Found") || e.getMessage().contains("the server doesn't have a resource type");
                 }
             });
+    }
+
+    /**
+     * Verifies that {@code absentTopicName} topic remains absent in {@code clusterName} Kafka cluster residing in {@code namespaceName},
+     * for two times {@code topicOperatorReconciliationSeconds} duration (in seconds) of Topic Operator reconciliation time,
+     * by querying the cluster using kafka scripts from {@code queryingPodName} Pod.
+     *
+     * @param namespaceName Namespace name
+     * @param queryingPodName  the name of the pod to query KafkaTopic from
+     * @param clusterName name of Kafka cluster
+     * @param absentTopicName name of Kafka topic which should not be created
+     * @param topicOperatorReconciliationSeconds interval in seconds for Topic Operator to reconcile
+     * @throws AssertionError in case topic is created
+     */
+    public static void verifyUnchangedTopicAbsence(String namespaceName, String queryingPodName, String clusterName, String absentTopicName, int topicOperatorReconciliationSeconds) {
+
+        long reconciliationDuration = Duration.ofSeconds(topicOperatorReconciliationSeconds).toMillis();
+        long endTime = System.currentTimeMillis() + 2 * reconciliationDuration;
+
+        LOGGER.info("Verifying absence of Topic: {}/{} in listed KafkaTopic(s) for next {} second(s)", namespaceName, absentTopicName, reconciliationDuration / 1000, namespaceName);
+
+        while (System.currentTimeMillis() < endTime) {
+            assertThat(KafkaCmdClient.listTopicsUsingPodCli(namespaceName, queryingPodName, KafkaResources.plainBootstrapAddress(clusterName)), not(hasItems(absentTopicName)));
+            try {
+                Thread.sleep(TestConstants.POLL_INTERVAL_FOR_RESOURCE_READINESS);
+            } catch (InterruptedException e) {
+                e.printStackTrace();
+            }
+        }
+    }
+
+    public static void setFinalizersInAllTopicsToNull(String namespaceName) {
+        LOGGER.info("Setting finalizers in all KafkaTopics in Namespace: {} to null", namespaceName);
+        KafkaTopicResource.kafkaTopicClient().inNamespace(namespaceName).list().getItems().forEach(kafkaTopic ->
+            KafkaTopicResource.replaceTopicResourceInSpecificNamespace(kafkaTopic.getMetadata().getName(), kt -> kt.getMetadata().setFinalizers(null), namespaceName)
+        );
+    }
+
+    public static void waitForTopicStatusMessage(String namespaceName, String topicName, String message) {
+        LOGGER.info("Waiting for KafkaTopic: {}/{} to contain message: {} in its status", namespaceName, topicName, message);
+
+        TestUtils.waitFor(String.join("KafkaTopic: %s/%s status to contain message: %s", namespaceName, topicName, message), TestConstants.GLOBAL_POLL_INTERVAL, TestConstants.GLOBAL_TIMEOUT,
+            () -> KafkaTopicResource.kafkaTopicClient().inNamespace(namespaceName).withName(topicName).get()
+                .getStatus().getConditions().stream().anyMatch(condition -> condition.getMessage().contains(message))
+        );
     }
 }

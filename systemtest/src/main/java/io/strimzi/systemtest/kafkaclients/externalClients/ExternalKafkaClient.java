@@ -4,7 +4,7 @@
  */
 package io.strimzi.systemtest.kafkaclients.externalClients;
 
-import io.strimzi.systemtest.Constants;
+import io.strimzi.systemtest.TestConstants;
 import io.strimzi.systemtest.kafkaclients.AbstractKafkaClient;
 import io.strimzi.systemtest.kafkaclients.clientproperties.ConsumerProperties;
 import io.strimzi.systemtest.kafkaclients.clientproperties.ProducerProperties;
@@ -161,7 +161,7 @@ public class ExternalKafkaClient extends AbstractKafkaClient<ExternalKafkaClient
                         sent.complete(messagesSentCounter[0]);
                     } else {
                         RecordMetadata metadata = producer.send(record).get();
-                        LOGGER.debug("Message " + record.value() + " written on topic=" + metadata.topic() +
+                        LOGGER.debug("Message " + record.value() + " written on Topic=" + metadata.topic() +
                             ", partition=" + metadata.partition() +
                             ", offset=" + metadata.offset());
                         messagesSentCounter[0]++;
@@ -178,8 +178,8 @@ public class ExternalKafkaClient extends AbstractKafkaClient<ExternalKafkaClient
         send.run();
 
         try {
-            int messagesSent = sent.get(Constants.GLOBAL_CLIENTS_TIMEOUT, TimeUnit.MILLISECONDS);
-            LOGGER.info("Sent {} messages.", messagesSent);
+            int messagesSent = sent.get(TestConstants.GLOBAL_CLIENTS_TIMEOUT, TimeUnit.MILLISECONDS);
+            LOGGER.info("Sent {} messages", messagesSent);
 
             producer.close();
 
@@ -212,7 +212,7 @@ public class ExternalKafkaClient extends AbstractKafkaClient<ExternalKafkaClient
 
                 if (size[0] >= messageCount) {
                     received.complete(size[0]);
-                } else if (System.currentTimeMillis() - currentTimeMs > Constants.GLOBAL_TIMEOUT) {
+                } else if (System.currentTimeMillis() - currentTimeMs > TestConstants.GLOBAL_TIMEOUT) {
                     received.completeExceptionally(new WaitException("Timeout for polling all the messages"));
                 } else {
                     this.run();
@@ -223,8 +223,8 @@ public class ExternalKafkaClient extends AbstractKafkaClient<ExternalKafkaClient
         poll.run();
 
         try {
-            int messagesReceived = received.get(Constants.GLOBAL_CLIENTS_TIMEOUT, TimeUnit.MILLISECONDS);
-            LOGGER.info("Received {} messages.", messagesReceived);
+            int messagesReceived = received.get(TestConstants.GLOBAL_CLIENTS_TIMEOUT, TimeUnit.MILLISECONDS);
+            LOGGER.info("Received {} messages", messagesReceived);
 
             consumer.close();
 

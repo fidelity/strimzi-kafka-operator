@@ -4,7 +4,7 @@
  */
 package io.strimzi.operator.cluster.model.cruisecontrol;
 
-import io.strimzi.operator.cluster.operator.resource.Quantities;
+import io.strimzi.operator.cluster.model.Quantities;
 import io.vertx.core.json.JsonObject;
 
 /**
@@ -35,5 +35,14 @@ public class CpuCapacity {
     @Override
     public String toString() {
         return this.getJson().toString();
+    }
+
+    /**
+     * Retrieves the value of the 'cores' property.
+     *
+     * @return The value of the 'cores' property.
+     */
+    public String getCores() {
+        return cores;
     }
 }

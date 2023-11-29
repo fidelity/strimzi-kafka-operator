@@ -15,7 +15,7 @@ import io.strimzi.api.kafka.model.KafkaExporterResources;
 import io.strimzi.api.kafka.model.KafkaResources;
 import io.strimzi.api.kafka.model.Spec;
 import io.strimzi.api.kafka.model.status.Status;
-import io.strimzi.systemtest.Constants;
+import io.strimzi.systemtest.TestConstants;
 import io.strimzi.systemtest.Environment;
 import io.strimzi.systemtest.enums.DefaultNetworkPolicy;
 import io.strimzi.systemtest.resources.ResourceManager;
@@ -37,7 +37,7 @@ public class NetworkPolicyResource implements ResourceType<NetworkPolicy> {
 
     @Override
     public String getKind() {
-        return Constants.NETWORK_POLICY;
+        return TestConstants.NETWORK_POLICY;
     }
     @Override
     public NetworkPolicy get(String namespace, String name) {
@@ -51,28 +51,34 @@ public class NetworkPolicyResource implements ResourceType<NetworkPolicy> {
     public void delete(NetworkPolicy resource) {
         ResourceManager.kubeClient().namespace(resource.getMetadata().getNamespace()).deleteNetworkPolicy(resource.getMetadata().getName());
     }
+
+    @Override
+    public void update(NetworkPolicy resource) {
+        ResourceManager.kubeClient().namespace(resource.getMetadata().getNamespace()).updateNetworkPolicy(resource);
+    }
+
     @Override
     public boolean waitForReadiness(NetworkPolicy resource) {
         return resource != null;
     }
 
     /**
-     * Method for allowing network policies for ClusterOperator
+     * Method for allowing network policies for Cluster Operator
      */
 
     public static void allowNetworkPolicySettingsForClusterOperator(ExtensionContext extensionContext, String namespace) {
         String clusterOperatorKind = "cluster-operator";
         LabelSelector labelSelector = new LabelSelectorBuilder()
-            .addToMatchLabels(Constants.SCRAPER_LABEL_KEY, Constants.SCRAPER_LABEL_VALUE)
+            .addToMatchLabels(TestConstants.SCRAPER_LABEL_KEY, TestConstants.SCRAPER_LABEL_VALUE)
             .build();
 
-        LOGGER.info("Apply NetworkPolicy access to {} from pods with LabelSelector {}", clusterOperatorKind, labelSelector);
+        LOGGER.info("Apply NetworkPolicy access to {} from Pods with LabelSelector {}", clusterOperatorKind, labelSelector);
 
         NetworkPolicy networkPolicy = NetworkPolicyTemplates.networkPolicyBuilder(namespace, clusterOperatorKind, labelSelector)
             .editSpec()
                 .editFirstIngress()
                     .addNewPort()
-                        .withNewPort(Constants.CLUSTER_OPERATOR_METRICS_PORT)
+                        .withNewPort(TestConstants.CLUSTER_OPERATOR_METRICS_PORT)
                         .withProtocol("TCP")
                     .endPort()
                 .endIngress()
@@ -83,28 +89,28 @@ public class NetworkPolicyResource implements ResourceType<NetworkPolicy> {
             .build();
 
         LOGGER.debug("Creating NetworkPolicy: {}", networkPolicy.toString());
-        ResourceManager.getInstance().createResource(extensionContext, networkPolicy);
+        ResourceManager.getInstance().createResourceWithWait(extensionContext, networkPolicy);
         LOGGER.info("Network policy for LabelSelector {} successfully created", labelSelector);
     }
 
     public static void allowNetworkPolicySettingsForEntityOperator(ExtensionContext extensionContext, String clusterName, String namespace) {
         LabelSelector labelSelector = new LabelSelectorBuilder()
-            .addToMatchLabels(Constants.SCRAPER_LABEL_KEY, Constants.SCRAPER_LABEL_VALUE)
+            .addToMatchLabels(TestConstants.SCRAPER_LABEL_KEY, TestConstants.SCRAPER_LABEL_VALUE)
             .build();
 
         String eoDeploymentName = KafkaResources.entityOperatorDeploymentName(clusterName);
 
-        LOGGER.info("Apply NetworkPolicy access to {} from pods with LabelSelector {}", eoDeploymentName, labelSelector);
+        LOGGER.info("Apply NetworkPolicy access to {} from Pods with LabelSelector {}", eoDeploymentName, labelSelector);
 
         NetworkPolicy networkPolicy = NetworkPolicyTemplates.networkPolicyBuilder(namespace, eoDeploymentName, labelSelector)
             .editSpec()
                 .editFirstIngress()
                     .addNewPort()
-                        .withNewPort(Constants.TOPIC_OPERATOR_METRICS_PORT)
+                        .withNewPort(TestConstants.TOPIC_OPERATOR_METRICS_PORT)
                         .withProtocol("TCP")
                     .endPort()
                     .addNewPort()
-                        .withNewPort(Constants.USER_OPERATOR_METRICS_PORT)
+                        .withNewPort(TestConstants.USER_OPERATOR_METRICS_PORT)
                         .withProtocol("TCP")
                     .endPort()
                 .endIngress()
@@ -117,23 +123,23 @@ public class NetworkPolicyResource implements ResourceType<NetworkPolicy> {
             .build();
 
         LOGGER.debug("Creating NetworkPolicy: {}", networkPolicy.toString());
-        ResourceManager.getInstance().createResource(extensionContext, networkPolicy);
+        ResourceManager.getInstance().createResourceWithWait(extensionContext, networkPolicy);
         LOGGER.info("Network policy for LabelSelector {} successfully created", labelSelector);
     }
 
     public static void allowNetworkPolicySettingsForKafkaExporter(ExtensionContext extensionContext, String clusterName, String namespace) {
         String kafkaExporterDeploymentName = KafkaExporterResources.deploymentName(clusterName);
         LabelSelector labelSelector = new LabelSelectorBuilder()
-            .addToMatchLabels(Constants.SCRAPER_LABEL_KEY, Constants.SCRAPER_LABEL_VALUE)
+            .addToMatchLabels(TestConstants.SCRAPER_LABEL_KEY, TestConstants.SCRAPER_LABEL_VALUE)
             .build();
 
-        LOGGER.info("Apply NetworkPolicy access to {} from pods with LabelSelector {}", kafkaExporterDeploymentName, labelSelector);
+        LOGGER.info("Apply NetworkPolicy access to {} from Pods with LabelSelector {}", kafkaExporterDeploymentName, labelSelector);
 
         NetworkPolicy networkPolicy = NetworkPolicyTemplates.networkPolicyBuilder(namespace, kafkaExporterDeploymentName, labelSelector)
             .editSpec()
                 .editFirstIngress()
                     .addNewPort()
-                        .withNewPort(Constants.COMPONENTS_METRICS_PORT)
+                        .withNewPort(TestConstants.COMPONENTS_METRICS_PORT)
                         .withProtocol("TCP")
                     .endPort()
                 .endIngress()
@@ -146,7 +152,7 @@ public class NetworkPolicyResource implements ResourceType<NetworkPolicy> {
             .build();
 
         LOGGER.debug("Creating NetworkPolicy: {}", networkPolicy.toString());
-        ResourceManager.getInstance().createResource(extensionContext, networkPolicy);
+        ResourceManager.getInstance().createResourceWithWait(extensionContext, networkPolicy);
         LOGGER.info("Network policy for LabelSelector {} successfully created", labelSelector);
     }
 
@@ -157,27 +163,27 @@ public class NetworkPolicyResource implements ResourceType<NetworkPolicy> {
      */
     public static void allowNetworkPolicySettingsForResource(ExtensionContext extensionContext, HasMetadata resource, String deploymentName) {
         LabelSelector labelSelector = new LabelSelectorBuilder()
-            .addToMatchLabels(Constants.SCRAPER_LABEL_KEY, Constants.SCRAPER_LABEL_VALUE)
+            .addToMatchLabels(TestConstants.SCRAPER_LABEL_KEY, TestConstants.SCRAPER_LABEL_VALUE)
             .build();
 
         final String namespaceName = StUtils.isParallelNamespaceTest(extensionContext) && !Environment.isNamespaceRbacScope() ?
             // if parallel namespace test use namespace from store and if RBAC is enable we don't run tests in parallel mode and with that said we don't create another namespaces
-            extensionContext.getStore(ExtensionContext.Namespace.GLOBAL).get(Constants.NAMESPACE_KEY).toString() :
+            extensionContext.getStore(ExtensionContext.Namespace.GLOBAL).get(TestConstants.NAMESPACE_KEY).toString() :
             // otherwise use resource namespace
             resource.getMetadata().getNamespace();
 
         if (kubeClient(namespaceName).listPods(namespaceName, labelSelector).size() == 0) {
             List<String> pods = kubeClient(namespaceName).listPods(namespaceName).stream()
                 .map(pod -> pod.getMetadata().getName()).collect(Collectors.toList());
-            LOGGER.error("Pods inside {} namespace are {}", namespaceName, pods.toString());
+            LOGGER.error("Pods inside Namespace: {} are: {}", namespaceName, pods.toString());
             throw new RuntimeException("You did not create the Scraper instance(pod) before using the " + resource.getKind() + " in namespace:" + namespaceName);
         }
 
-        LOGGER.info("Apply NetworkPolicy access to {} from pods with LabelSelector {}", deploymentName, labelSelector);
+        LOGGER.info("Apply NetworkPolicy access to {} from Pods with LabelSelector {}", deploymentName, labelSelector);
 
         NetworkPolicy networkPolicy = new NetworkPolicyBuilder()
             .withApiVersion("networking.k8s.io/v1")
-            .withKind(Constants.NETWORK_POLICY)
+            .withKind(TestConstants.NETWORK_POLICY)
             .withNewMetadata()
                 .withName(resource.getMetadata().getName() + "-allow")
                 .withNamespace(namespaceName)
@@ -200,7 +206,7 @@ public class NetworkPolicyResource implements ResourceType<NetworkPolicy> {
                         .withProtocol("TCP")
                     .endPort()
                     .addNewPort()
-                        .withNewPort(Constants.JMX_PORT)
+                        .withNewPort(TestConstants.JMX_PORT)
                         .withProtocol("TCP")
                     .endPort()
                 .endIngress()
@@ -214,7 +220,7 @@ public class NetworkPolicyResource implements ResourceType<NetworkPolicy> {
             .build();
 
         LOGGER.debug("Creating NetworkPolicy: {}", networkPolicy.toString());
-        ResourceManager.getInstance().createResource(extensionContext, networkPolicy);
+        ResourceManager.getInstance().createResourceWithWait(extensionContext, networkPolicy);
         LOGGER.info("Network policy for LabelSelector {} successfully created", labelSelector);
     }
 
@@ -225,7 +231,7 @@ public class NetworkPolicyResource implements ResourceType<NetworkPolicy> {
             } else {
                 NetworkPolicyTemplates.applyDefaultNetworkPolicy(extensionContext, namespace, DefaultNetworkPolicy.DEFAULT_TO_ALLOW);
             }
-            LOGGER.info("NetworkPolicy successfully set to: {} for namespace: {}", Environment.DEFAULT_TO_DENY_NETWORK_POLICIES, namespace);
+            LOGGER.info("NetworkPolicy successfully set to: {} for Namespace: {}", Environment.DEFAULT_TO_DENY_NETWORK_POLICIES, namespace);
         }
     }
 
